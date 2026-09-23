@@ -13,6 +13,7 @@ __pycache__/
 /.env
 .env
 .cozeproj/reduction
+_trash
 
 # JS/TS bundlers & build outputs
 .next
