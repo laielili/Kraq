@@ -165,3 +165,8 @@ Desktop.ini
 .coze-logs
 .codegraph/
 /data/
+
+
+#AI-AGents
+AGENTS.md
+DESIGN.md
