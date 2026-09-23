@@ -1,0 +1,6 @@
+[project]
+sub_id = "1775fba6"
+name = "DataAgent"
+directives = []
+requires = ["python-3.12"]
+project_type = ""

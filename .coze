@@ -1,0 +1,13 @@
+[project]
+sub_id = "1775fba6"
+name = "DataAgent"
+directives = []
+requires = ["python-3.12"]
+project_type = ""
+version = "0.1.9"
+
+[preview]
+preview_enable = "disabled"
+
+[subprojects]
+path = ["DataAgent"]
