@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
@@ -55,38 +56,39 @@
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --radius: 0.375rem;
+  /* 档案馆检索室：纸面 / 墨水 / 绿罩台灯 / 朱砂批注 */
+  --background: #f6f2e9;
+  --foreground: #29261d;
+  --card: #fcfaf3;
+  --card-foreground: #29261d;
+  --popover: #fcfaf3;
+  --popover-foreground: #29261d;
+  --primary: #34584b;
+  --primary-foreground: #f6f2e9;
+  --secondary: #ede7d6;
+  --secondary-foreground: #29261d;
+  --muted: #efe9da;
+  --muted-foreground: #8a8270;
+  --accent: #a64b2a;
+  --accent-foreground: #fcfaf3;
+  --destructive: #9c3b22;
+  --border: #dad2bd;
+  --input: #d5ccb4;
+  --ring: #34584b;
+  --chart-1: #34584b;
+  --chart-2: #a64b2a;
+  --chart-3: #8a8270;
+  --chart-4: #6b7f5e;
+  --chart-5: #b08d57;
+  --sidebar: #f1ecdf;
+  --sidebar-foreground: #29261d;
+  --sidebar-primary: #34584b;
+  --sidebar-primary-foreground: #f6f2e9;
+  --sidebar-accent: #ede7d6;
+  --sidebar-accent-foreground: #29261d;
+  --sidebar-border: #dad2bd;
+  --sidebar-ring: #34584b;
 }
 
 .dark {
@@ -129,9 +131,36 @@
   }
   body {
     @apply bg-background text-foreground;
+    background-image: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 27px,
+      rgb(41 38 29 / 0.04) 27px,
+      rgb(41 38 29 / 0.04) 28px
+    );
   }
 }
 
 body {
   @apply font-sans;
+}
+
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background-color: var(--foreground);
+  animation: caret-blink 1s step-end infinite;
 }

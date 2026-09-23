@@ -1,9 +1,14 @@
 [project]
+sub_id = "1775fba6"
+name = "DataAgent"
 requires = [ "nodejs-24" ]
 project_type = "web"
 template = "nextjs"
 version = "0.1.9"
 appliedPatches = [ ]
+
+[preview]
+preview_enable = "enabled"
 
 [dev]
 build = [ "bash", "./scripts/prepare.sh" ]
@@ -55,3 +60,6 @@ run_win = [
   "./scripts/start.ps1"
 ]
 deps = [ "git" ]
+
+[subprojects]
+path = ["."]
