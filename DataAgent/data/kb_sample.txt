@@ -1,0 +1,5 @@
+The quick brown fox jumps over the lazy dog.
+A fast brown fox leaps over a sleepy dog.
+The quick brown fox is quick.
+Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+Practicing BM25 retrieval algorithm.

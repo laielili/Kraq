@@ -1,0 +1,16 @@
+# config.yaml
+intent:
+  # preset patterns are hardcoded; can be extended
+retriever:
+  bm25_weight: 0.4
+  vector_weight: 0.6
+  top_k: 10
+reranker:
+  method: heuristic  # placeholder for future cross-encoder
+generator:
+  model: "uer/t5-base-chinese-cluecorpussmall"  # example Chinese T5
+  max_length: 256
+  temperature: 0.7
+validator:
+  enable_citation_check: true
+  enable_hallucination_heuristic: true
