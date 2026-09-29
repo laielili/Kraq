@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Brain,
   CheckCircle2,
+  ChevronRight,
   Loader2,
   Send,
   Square,
@@ -16,10 +18,53 @@ import type { SourceDoc } from '@/lib/rag/types';
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** 模型思考过程（thinking tokens），随流式累积；仅思考型模型会产生 */
+  thinking?: string;
+  /** 思考耗时（毫秒），done 时由后端事件时间差计算 */
+  thinkingMs?: number;
   sources?: SourceDoc[];
   streaming?: boolean;
   valid?: boolean | null;
   error?: boolean;
+}
+
+/** 思考过程折叠块：流式时显示"正在思考…"，结束后变为"已思考 N 秒"，点击展开/收起 */
+function ThinkingBlock({ msg }: { msg: ChatMessage }) {
+  const [open, setOpen] = useState(false);
+  const active = msg.streaming && !msg.content;
+  const seconds =
+    msg.thinkingMs != null ? Math.round(msg.thinkingMs / 1000) : null;
+  return (
+    <div className="mb-2 border-b border-border/60 pb-2">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
+        {active ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : (
+          <Brain className="size-3.5" />
+        )}
+        <span>
+          {active
+            ? '正在思考…'
+            : seconds != null
+              ? `已思考 ${seconds} 秒`
+              : '已思考'}
+        </span>
+        <ChevronRight
+          className={`size-3 transition-transform ${open ? 'rotate-90' : ''}`}
+        />
+      </button>
+      {open && (
+        <p className="mt-2 max-h-60 overflow-y-auto whitespace-pre-wrap font-serif text-xs leading-5 text-muted-foreground">
+          {msg.thinking}
+        </p>
+      )}
+    </div>
+  );
 }
 
 const SUGGESTIONS = [
@@ -102,13 +147,18 @@ export function ChatPanel({
                       : 'bg-card'
                   }`}
                 >
+                  {msg.thinking && msg.thinking.length > 0 && (
+                    <ThinkingBlock msg={msg} />
+                  )}
                   {msg.content ? (
                     <CitationText text={msg.content} sources={msg.sources ?? []} />
                   ) : (
-                    <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Loader2 className="size-3.5 animate-spin" />
-                      正在分析问题…
-                    </p>
+                    !msg.thinking?.length && (
+                      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        正在分析问题…
+                      </p>
+                    )
                   )}
                   {msg.streaming && msg.content && (
                     <span className="caret" aria-hidden />

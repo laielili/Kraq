@@ -1,381 +1,165 @@
-# DataAgent
+# DataAgent — 知识库智能问答系统
 
-这是一个基于 [Next.js 16](https://nextjs.org) + [shadcn/ui](https://ui.shadcn.com) 的全栈应用项目，由扣子编程 CLI 创建，由 hermes + claude 打磨完善。
+RAG 全链路的问答工作台：**意图识别 → BM25 + 向量混合检索 → RRF 融合 → 重排序 → 流式生成 → 引用/幻觉校验**。全过程在右侧「流程追溯」面板逐步可视化，回答带 `[n]` 引用编号，悬停可溯源原文。
+
+Python FastAPI 承担全部 RAG 逻辑，Next.js 只做界面与流式转发；模型端点可配置、可换（Ollama / 任何 OpenAI 兼容服务 / llama.cpp）。
+
+> 前身是扣子编程 CLI 生成的 Next.js 全栈模板（当时 RAG 五环节跑在 TS 端），现已整体重构为前后端双栈架构，此前的模板式 README 已随架构一同废弃。
+
+## 架构
+
+```
+                       浏览器只需认识 :3000
+┌────────────────────────────────────────────────────────────┐
+│  Next.js dev :3000（页面 + HMR）                            │
+│  src/app/page.tsx 三栏工作台                                │
+│    左：档案柜（多知识库切换 / 管理 / 文档上传）               │
+│    中：对话流（SSE 增量渲染、thinking 折叠块、[n] 引用）      │
+│    右：流程追溯（五阶段过程卡，展示真实中间数据）              │
+│                                                            │
+│  src/app/api/[...path]/route.ts —— 流式 catch-all           │
+│  所有 /api/* 逐字节转发到 :8000（SSE 不能走 rewrites，会缓冲卡死）│
+└───────────────┬────────────────────────────────────────────┘
+                │ http://127.0.0.1:8000（仅本机回环，不对外）
+┌───────────────▼────────────────────────────────────────────┐
+│  FastAPI :8000（uvicorn，main.py 一并托管）                  │
+│    backend/main.py      REST + /api/ask SSE                 │
+│    backend/pipeline.py  RAG 编排 + 向量补算                  │
+│    backend/search.py    BM25 / RRF / 意图规则 / 启发式重排    │
+│    backend/chroma_store.py  Chroma 向量库（每库一个 collection）│
+│    backend/store.py     kb.json / config.json 原子写 + 迁移   │
+│    backend/models_client.py  三协议模型客户端                 │
+│  非路由请求：反向代理回 :3000（所以 :8000 也能开页面，仅调试用）  │
+└────────────────────────────────────────────────────────────┘
+```
+
+```
+data/（运行时数据，已 gitignore，首次启动自动播种）
+├── kb.json       {kbs:[{kbId, name, docs:[{id,title,content,embeddingMeta,createdAt}]}]}
+├── config.json   端点 + 五阶段模型映射 + 检索/校验/切块参数
+├── chroma/       唯一的向量存储（正文永远只存 kb.json，避免双写漂移）
+└── example_docs/ 12 条种子资料的 txt 版（便于手动导入体验）
+```
+
+## RAG 流水线与降级策略
+
+每一环都在真实数据上运行，所有中间结果通过 SSE 事件推给前端：
+
+| 阶段 | 实现 | 模型不可用/失败时 |
+| --- | --- | --- |
+| 意图识别 | LLM 分类为 FAQ / SEARCH / CLARIFY / OUT_OF_SCOPE | 规则兜底 `classify_intent`；OUT_OF_SCOPE 短路作答 |
+| 检索 | BM25（CJK 单字+二元分词）+ Chroma 向量召回，加权 RRF 融合（k=60） | 向量端点不可达→仅 BM25（trace 标记 `vectorAvailable:false`），绝不阻塞 |
+| 重排 | 配置了重排模型则调用（如 bge-reranker-v2-m3） | 词重叠启发式重排兜底 |
+| 生成 | 流式输出（`delta` 事件），思考型模型的思考走 `thinking` 事件 | 聊天卡内直接显示失败原因，**不用 mock 内容冒充回答** |
+| 校验 | LLM 校验引用与幻觉，输出 `valid/citations/reason` JSON | 引用规则校验兜底（编号越界/缺失即不通过，可整体开关） |
+
+诚实降级是设计原则：任何环节失败都明确标注、能兜底就兜底，不伪造结果。
 
 ## 快速开始
 
-### 启动开发服务器
+**前置条件**：Node.js 24 + pnpm ≥ 9、Python ≥ 3.10；生成/向量模型需要一个可访问的端点（默认配置指向本地 [Ollama](https://ollama.com) `:11434`）。
 
 ```bash
-coze-dev dev
+# 1. 前端依赖
+pnpm install
+
+# 2. 后端依赖（项目根建虚拟环境）
+python -m venv .venv
+source .venv/Scripts/activate        # Windows Git Bash；Linux/macOS 为 .venv/bin/activate
+pip install -r requirements.txt      # fastapi / uvicorn / httpx / chromadb / pydantic
+
+# 3. 一键启动（同时拉起 Next dev :3000 与 FastAPI :8000）
+python main.py
 ```
 
-启动后，在浏览器中打开 [http://localhost:5000](http://localhost:5000) 查看应用。
+启动完成后打开 **http://localhost:3000**（:8000 仅 API 调试入口，日常别从它开页面——从后端端口开页面会触发 dev server 异常刷新循环）。
+停服按 `Ctrl+C`，main.py 会连带终止 Next 子进程（Windows 下杀整棵进程树）。
 
-开发服务器支持热更新，修改代码后页面会自动刷新。
-
-### 构建生产版本
+推荐配置 Ollama（默认端点即指向它）：
 
 ```bash
-coze-dev build
+ollama pull qwen3:4b                    # 示例：意图/生成/校验
+ollama pull qwen3-embedding:4b          # 向量
+ollama pull qllama/bge-reranker-v2-m3   # 重排（可选）
 ```
 
-### 启动生产服务器
+重排端点用 `llamacpp` 协议时**无需手动起服务**：首次问答若 `:8082` 无人监听，后端会自动用 llama-server 以 `--reranking` 模式拉起（复用 ollama 已下载的 GGUF blob，不重复下载）。前提：`llama-server.exe` 位于 `~/llama.cpp/`，或用环境变量 `LLAMA_CPP_DIR` 指向其所在目录。
 
-```bash
-coze-dev start
-```
+端口可用环境变量覆盖：`FRONTEND_PORT=3000 BACKEND_PORT=8000 python main.py`。
+
+## 模型与检索参数配置
+
+全部走 UI（右上角「检索与生成参数」），落盘到 `data/config.json`：
+
+- **端点管理**：任意数量的端点，协议 `ollama` / `openai`（/v1 后缀自动探测）/ `llamacpp`；API Key 只写不回显（接口返回 `hasKey` 标记）。
+- **五阶段映射**：intent / embedding / rerank / generate / validate 各自绑定端点+模型，改配置即时生效。
+- **检索参数**：候选召回数 `retrieveTopK`（默认 10）、重排保留数 `rerankTopN`（默认 5，恒 ≤ 召回数）、BM25/向量权重（默认 0.4/0.6）、温度、校验开关。
+- **切块参数**：文件上传按 markdown 标题/段落感知切块，`chunking.maxChars=600`、`overlap=50`。
+- **Agent 级系统提示词**：归属知识问答 Agent，对所有知识库统一生效；定制存 `config.json` 的 `systemPrompt`（未定制时回落全局默认 `prompts/system_kb_default.md`）。提示词弹窗里保存空内容 = 重置回默认。注意 `[n]` 引用编号是前端渲染与幻觉校验的契约，提示词模板中的相关条目不可删。
 
 ## 项目结构
 
 ```
-src/
-├── app/                      # Next.js App Router 目录
-│   ├── layout.tsx           # 根布局组件
-│   ├── page.tsx             # 首页
-│   ├── globals.css          # 全局样式（包含 shadcn 主题变量）
-│   └── [route]/             # 其他路由页面
-├── components/              # React 组件目录
-│   └── ui/                  # shadcn/ui 基础组件（优先使用）
-│       ├── button.tsx
-│       ├── card.tsx
-│       └── ...
-├── lib/                     # 工具函数库
-│   └── utils.ts            # cn() 等工具函数
-└── hooks/                   # 自定义 React Hooks（可选）
-
-server/
-├── index.ts                 # 自定义服务器入口
-├── tsconfig.json           # Server TypeScript 配置
-└── dist/                    # 编译输出目录（自动生成）
+backend/                 # FastAPI 后端（RAG 心脏）
+  main.py                # 路由：health/config/models/kbs/kb/upload/ask(SSE)
+  pipeline.py            # run_ask 流水线 + 缺失向量补算（启动时后台 sync）
+  search.py              # BM25、RRF、意图规则、启发式重排
+  chroma_store.py        # Chroma PersistentClient（data/chroma/，每库一个 collection）
+  store.py               # kb.json/config.json 存储：asyncio锁 + 原子写 + 版本迁移
+  models_client.py       # ollama/openai/llamacpp 三协议 + llama.cpp rerank 服务自动拉起
+  chunker.py             # 上传文件的标题/段落感知切块
+  seed_docs.py           # 12 条中文种子知识（首访自动入库）
+  tokenizer.py           # 中英混合分词（CJK 单字+二元组 + 词级）
+src/                     # Next.js 前端
+  app/page.tsx           # 三栏工作台主页面
+  app/api/[...path]/route.ts  # 流式转发 /api/* → :8000（刻意不用 rewrites）
+  components/rag/        # chat-panel / kb-panel / trace-panel / citation-text
+                         # kb-manager-dialog / model-config-dialog / prompt-config-dialog
+  lib/rag/types.ts       # SSE 事件与配置的共享类型（前后端契约钉子）
+prompts/system_kb_default.md  # 生成默认系统提示词（引用契约在此）
+data/                    # 运行时状态（gitignore）；删掉即完全重置
 ```
 
-## 核心开发规范
+## API 一览
 
-### 1. 组件开发
+| 方法 & 路径 | 说明 |
+| --- | --- |
+| `GET /api/health` | `{ok, docs, kbs}` |
+| `GET/PUT /api/config` | 读写端点/阶段映射/参数（PUT 侧有量程钳制） |
+| `GET /api/models` | 并发探测各端点可用模型清单（配置弹窗的数据源+连通性测试） |
+| `GET/POST /api/kbs`、`PUT/DELETE /api/kbs` | 知识库增删改查（default 库不可删；删库连带清 Chroma collection） |
+| `GET/PUT /api/kbs/{kbId}/prompt` | 逐库系统提示词（空 = 回落全局默认） |
+| `GET/POST/DELETE /api/kb` | 当前库文档列表/添加/删除（均带 `kbId`，缺省回落 `default`） |
+| `POST /api/kb/upload` | 上传 txt/md（≤2M 字符）→ 自动切块入库 |
+| `POST /api/ask` | SSE 问答，`kbId` 可选 |
 
-**优先使用 shadcn/ui 基础组件**
+SSE 事件序固定为 `intent → retrieve → rerank → generate → (delta/thinking…) → (validate) → done`，异常发 `{"type":"error"}`。这一帧序是前后端契约（前端 `applyEvent` 依赖它），改动任何一环都不得破坏。
 
-本项目已预装完整的 shadcn/ui 组件库，位于 `src/components/ui/` 目录。开发时应优先使用这些组件作为基础：
+## 数据与备份
 
-```tsx
-// ✅ 推荐：使用 shadcn 基础组件
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+`knowledge base = data/kb.json`，向量在 `data/chroma/`，均为运行时生成且已 gitignore：
 
-export default function MyComponent() {
-  return (
-    <Card>
-      <CardHeader>标题</CardHeader>
-      <CardContent>
-        <Input placeholder="输入内容" />
-        <Button>提交</Button>
-      </CardContent>
-    </Card>
-  );
-}
-```
+- 旧版平铺结构自动迁移为单库 `default`，无需手工迁移。
+- 向量按文档懒补算（带模型名+维度校验），启动时后台 `sync_all` 幂等补齐；换 embedding 模型后旧向量自动失效重算。
+- 添加文档立即返回，不阻塞在向量化上（逐条增量补算，期间仅 BM25 可检索）。
+- 备份/迁移只需带走 `data/` 目录；删掉 `data/` 即完全重来（下次启动重新播种 12 条种子知识）。
 
-**可用的 shadcn 组件清单**
+## 开发注意事项（红线）
 
-- 表单：`button`, `input`, `textarea`, `select`, `checkbox`, `radio-group`, `switch`, `slider`
-- 布局：`card`, `separator`, `tabs`, `accordion`, `collapsible`, `scroll-area`
-- 反馈：`alert`, `alert-dialog`, `dialog`, `toast`, `sonner`, `progress`
-- 导航：`dropdown-menu`, `menubar`, `navigation-menu`, `context-menu`
-- 数据展示：`table`, `avatar`, `badge`, `hover-card`, `tooltip`, `popover`
-- 其他：`calendar`, `command`, `carousel`, `resizable`, `sidebar`
+- **只用 pnpm**（`preinstall` 钩子拦截 npm/yarn）。
+- **改了 `backend/*.py` 必须重启** `python main.py`——uvicorn 无热重载，旧代码会静默继续生效。
+- **`/api/ask` 的 SSE 必须流式透传**：`src/app/api/[...path]/route.ts` 的 catch-all 是刻意设计；换 next.config.ts rewrites 会缓冲响应体，实测卡死流式问答。
+- 前端改动验证：`pnpm validate`（tsc + eslint + stylelint 三合一）；完整发布走 `pnpm run build`。
+- Windows 细节：uvicorn 只绑 `127.0.0.1:8000` 是有意为之（后端不直接对外 + 避免 WS 升级冲突），勿改 `0.0.0.0`；杀后端用 `taskkill /PID <pid> /T /F` 杀整棵树，只杀监听 PID 会留残子进程占着 :8000。
+- `_trash/` 存放历史参考原型（初创 Python 脚手架、已移除的组件），被 gitignore，不参与构建，勿往里写新代码。
+- 运行时数据在 `data/`（gitignore），勿提交。
 
-详见 `src/components/ui/` 目录下的具体组件实现。
+## 设计基准文档
 
-### 2. 路由开发
+- `DESIGN.md` —— 视觉语言「档案馆检索室」（纸面米黄 / 墨黑 / 档案绿 / 朱砂批注；明确禁蓝紫渐变与玻璃拟态）。改 UI 前先读它。
+- `SOP.md` —— 启动运维速查（含 Windows 端口排障）。
+- `AGENTS.md` —— 面向 AI 协作者的仓库上下文注释。
 
-Next.js 使用文件系统路由，在 `src/app/` 目录下创建文件夹即可添加路由：
+## 平台预览（扣子编程）
 
-```bash
-# 创建新路由 /about
-src/app/about/page.tsx
-
-# 创建动态路由 /posts/[id]
-src/app/posts/[id]/page.tsx
-
-# 创建路由组（不影响 URL）
-src/app/(marketing)/about/page.tsx
-
-# 创建 API 路由
-src/app/api/users/route.ts
-```
-
-**页面组件示例**
-
-```tsx
-// src/app/about/page.tsx
-import { Button } from '@/components/ui/button';
-
-export const metadata = {
-  title: '关于我们',
-  description: '关于页面描述',
-};
-
-export default function AboutPage() {
-  return (
-    <div>
-      <h1>关于我们</h1>
-      <Button>了解更多</Button>
-    </div>
-  );
-}
-```
-
-**动态路由示例**
-
-```tsx
-// src/app/posts/[id]/page.tsx
-export default async function PostPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-
-  return <div>文章 ID: {id}</div>;
-}
-```
-
-**API 路由示例**
-
-```tsx
-// src/app/api/users/route.ts
-import { NextResponse } from 'next/server';
-
-export async function GET() {
-  return NextResponse.json({ users: [] });
-}
-
-export async function POST(request: Request) {
-  const body = await request.json();
-  return NextResponse.json({ success: true });
-}
-```
-
-### 3. 依赖管理
-
-**必须使用 pnpm 管理依赖**
-
-```bash
-# ✅ 安装依赖
-pnpm install
-
-# ✅ 添加新依赖
-pnpm add package-name
-
-# ✅ 添加开发依赖
-pnpm add -D package-name
-
-# ❌ 禁止使用 npm 或 yarn
-# npm install  # 错误！
-# yarn add     # 错误！
-```
-
-项目已配置 `preinstall` 脚本，使用其他包管理器会报错。
-
-### 4. 样式开发
-
-**使用 Tailwind CSS v4**
-
-本项目使用 Tailwind CSS v4 进行样式开发，并已配置 shadcn 主题变量。
-
-```tsx
-// 使用 Tailwind 类名
-<div className="flex items-center gap-4 p-4 rounded-lg bg-background">
-  <Button className="bg-primary text-primary-foreground">
-    主要按钮
-  </Button>
-</div>
-
-// 使用 cn() 工具函数合并类名
-import { cn } from '@/lib/utils';
-
-<div className={cn(
-  "base-class",
-  condition && "conditional-class",
-  className
-)}>
-  内容
-</div>
-```
-
-**主题变量**
-
-主题变量定义在 `src/app/globals.css` 中，支持亮色/暗色模式：
-
-- `--background`, `--foreground`
-- `--primary`, `--primary-foreground`
-- `--secondary`, `--secondary-foreground`
-- `--muted`, `--muted-foreground`
-- `--accent`, `--accent-foreground`
-- `--destructive`, `--destructive-foreground`
-- `--border`, `--input`, `--ring`
-
-### 5. 表单开发
-
-推荐使用 `react-hook-form` + `zod` 进行表单开发：
-
-```tsx
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import * as z from 'zod';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-
-const formSchema = z.object({
-  username: z.string().min(2, '用户名至少 2 个字符'),
-  email: z.string().email('请输入有效的邮箱'),
-});
-
-export default function MyForm() {
-  const form = useForm({
-    resolver: zodResolver(formSchema),
-    defaultValues: { username: '', email: '' },
-  });
-
-  const onSubmit = (data: z.infer<typeof formSchema>) => {
-    console.log(data);
-  };
-
-  return (
-    <form onSubmit={form.handleSubmit(onSubmit)}>
-      <Input {...form.register('username')} />
-      <Input {...form.register('email')} />
-      <Button type="submit">提交</Button>
-    </form>
-  );
-}
-```
-
-### 6. 数据获取
-
-**服务端组件（推荐）**
-
-```tsx
-// src/app/posts/page.tsx
-async function getPosts() {
-  const res = await fetch('https://api.example.com/posts', {
-    cache: 'no-store', // 或 'force-cache'
-  });
-  return res.json();
-}
-
-export default async function PostsPage() {
-  const posts = await getPosts();
-
-  return (
-    <div>
-      {posts.map(post => (
-        <div key={post.id}>{post.title}</div>
-      ))}
-    </div>
-  );
-}
-```
-
-**客户端组件**
-
-```tsx
-'use client';
-
-import { useEffect, useState } from 'react';
-
-export default function ClientComponent() {
-  const [data, setData] = useState(null);
-
-  useEffect(() => {
-    fetch('/api/data')
-      .then(res => res.json())
-      .then(setData);
-  }, []);
-
-  return <div>{JSON.stringify(data)}</div>;
-}
-```
-
-## 常见开发场景
-
-### 添加新页面
-
-1. 在 `src/app/` 下创建文件夹和 `page.tsx`
-2. 使用 shadcn 组件构建 UI
-3. 根据需要添加 `layout.tsx` 和 `loading.tsx`
-
-### 创建业务组件
-
-1. 在 `src/components/` 下创建组件文件（非 UI 组件）
-2. 优先组合使用 `src/components/ui/` 中的基础组件
-3. 使用 TypeScript 定义 Props 类型
-
-### 添加全局状态
-
-推荐使用 React Context 或 Zustand：
-
-```tsx
-// src/lib/store.ts
-import { create } from 'zustand';
-
-interface Store {
-  count: number;
-  increment: () => void;
-}
-
-export const useStore = create<Store>((set) => ({
-  count: 0,
-  increment: () => set((state) => ({ count: state.count + 1 })),
-}));
-```
-
-### 集成数据库
-
-推荐使用 Prisma 或 Drizzle ORM，在 `src/lib/db.ts` 中配置。
-
-## 技术栈
-
-- **框架**: Next.js 16.1.1 (App Router)
-- **UI 组件**: shadcn/ui (基于 Radix UI)
-- **样式**: Tailwind CSS v4
-- **表单**: React Hook Form + Zod
-- **图标**: Lucide React
-- **字体**: Geist Sans & Geist Mono
-- **包管理器**: pnpm 9+
-- **TypeScript**: 5.x
-
-## 参考文档
-
-- [Next.js 官方文档](https://nextjs.org/docs)
-- [shadcn/ui 组件文档](https://ui.shadcn.com)
-- [Tailwind CSS 文档](https://tailwindcss.com/docs)
-- [React Hook Form](https://react-hook-form.com)
-
-## 重要提示
-
-1. **必须使用 pnpm** 作为包管理器
-2. **优先使用 shadcn/ui 组件** 而不是从零开发基础组件
-3. **遵循 Next.js App Router 规范**，正确区分服务端/客户端组件
-4. **使用 TypeScript** 进行类型安全开发
-5. **使用 `@/` 路径别名** 导入模块（已配置）
-
-## 云盘源码与本地开发
-
-Vite、Next.js、Nuxt 的 Unix 开发脚本在 `COZE_DRIVE_ROOT`（默认 `/Coze/Drive`）内通过
-`scripts/local-workspace.cjs` 将源码用 `rsync` 同步到本机临时目录。系统需提供 Node.js、pnpm、bash 和 rsync。
-所有开发与修复仍在云盘源码目录完成，从该目录执行 `.coze` 的 `[dev]` 命令。
-
-- `prepare.sh` 同步并在本地安装依赖；安装成功且云盘依赖输入未变化时，仅将更新的锁文件回写云盘。
-- `dev.sh` 在本地镜像运行开发服务，每轮 rsync 结束后等待一秒再同步，框架监听本地文件进行热更新。
-  同步失败或依赖输入变化时停止服务；修复后重新运行 `prepare.sh` / `dev.sh`。
-- `validate.sh` 使用独立的本地 `check` 目录，避免类型生成影响正在运行的 `dev` 服务。
-- 同步排除 `.git`、`node_modules`、日志和框架输出；不要在镜像修复源码或将依赖、编译产物回传云盘。
-  日志和 PID 默认保留在源码目录的 `logs/`，实际镜像路径见脚本输出。
-
-本地镜像仅用于 `[dev].build/run/validate`。部署配置、`build.sh`、`start.sh` 保持原流程；
-普通本地目录和 Windows PowerShell 入口也保持原流程。
-存量项目通过新版 CLI 的 `coze-dev patch --dry-run` / `coze-dev patch` 升级，沿用 patch 总开关。
-仅升级完整匹配旧模板的三个 Unix 开发脚本并保留端口；自定义开发脚本、命令或同名 helper 会跳过。
+`.coze` 是平台唯一入口，`[dev]`/`[deploy]` 经 `scripts/` 下脚本驱动——日常本地开发请直接 `python main.py`。平台验收只认 `test_run`（静态检查 + 探活 + 全接口 curl 冒烟），改代码后必须重跑；预览端口走 `.preview`（`expose_port=5000`）。

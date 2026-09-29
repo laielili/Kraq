@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Archive,
   BookOpenText,
+  ChevronDown,
+  Library,
   Loader2,
   Settings2,
   Workflow,
@@ -15,13 +17,6 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Sheet,
   SheetContent,
   SheetTitle,
@@ -31,43 +26,85 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { ChatPanel, type ChatMessage } from '@/components/rag/chat-panel';
 import { KbPanel } from '@/components/rag/kb-panel';
+import {
+  KbManagerDialog,
+  type KbSummary,
+} from '@/components/rag/kb-manager-dialog';
+import { ModelConfigDialog } from '@/components/rag/model-config-dialog';
+import { PromptConfigDialog } from '@/components/rag/prompt-config-dialog';
 import { TracePanel } from '@/components/rag/trace-panel';
 import type {
   AskEvent,
   KbDocMeta,
-  ModelInfo,
   RagConfig,
   TraceState,
 } from '@/lib/rag/types';
 
 const DEFAULT_CONFIG: RagConfig = {
-  model: 'doubao-seed-2-0-pro-260215',
+  endpoints: [],
+  stages: {
+    intent: { endpointId: null, model: '' },
+    embedding: { endpointId: null, model: '' },
+    rerank: { endpointId: null, model: '' },
+    generate: { endpointId: null, model: '' },
+    validate: { endpointId: null, model: '' },
+  },
   temperature: 0.7,
   topK: 5,
+  retrieveTopK: 10,
+  rerankTopN: 5,
   bm25Weight: 0.4,
   vectorWeight: 0.6,
   enableValidation: true,
+  chunking: { maxChars: 600, overlap: 50 },
 };
 
 export default function Home() {
-  const [models, setModels] = useState<ModelInfo[]>([]);
   const [config, setConfig] = useState<RagConfig | null>(null);
   const [docs, setDocs] = useState<KbDocMeta[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [trace, setTrace] = useState<TraceState | null>(null);
   const [streaming, setStreaming] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [putError, setPutError] = useState<string | null>(null);
+  const [currentKbIdState, setCurrentKbId] = useState('default');
+  const [kbs, setKbs] = useState<KbSummary[]>([]);
+  const [kbsLoading, setKbsLoading] = useState(false);
+  const [kbActionPending, setKbActionPending] = useState(false);
+  const [kbSwitcherOpen, setKbSwitcherOpen] = useState(false);
+  const [kbError, setKbError] = useState<string | null>(null);
+  // 提示词配置弹窗（知识问答 Agent 全局系统提示词；自「配置模型」顶部按钮进入）
+  const [promptOpen, setPromptOpen] = useState(false);
 
   const configRef = useRef<RagConfig>(DEFAULT_CONFIG);
+  const currentKbIdRef = useRef('default');
   const streamingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  // 思考计时（跨 applyEvent/send 两个闭包共享）
+  const thinkingStartRef = useRef<number | null>(null);
+  const thinkingEndRef = useRef<number | null>(null);
+  // 会话 ID：页面生命周期内稳定（同一页面多次提问共用），刷新/关闭即作废。
+  // 随请求体传给后端，供 openai 网关（如 opencode go）的 prompt 缓存命中。
+  const sessionIdRef = useRef(
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID().replace(/-/g, '')
+      : Math.random().toString(36).slice(2) + Date.now().toString(36),
+  );
 
   useEffect(() => {
     configRef.current = config ?? DEFAULT_CONFIG;
   }, [config]);
 
-  const refreshKb = useCallback(async () => {
+  const currentKbId = currentKbIdState;
+  useEffect(() => {
+    currentKbIdRef.current = currentKbId;
+  }, [currentKbId]);
+
+  const CURRENT_KB_KEY = 'dataagent.currentKbId';
+
+  const refreshKb = useCallback(async (kbId: string) => {
     try {
-      const res = await fetch('/api/kb');
+      const res = await fetch(`/api/kb?kbId=${encodeURIComponent(kbId)}`);
       const data = (await res.json()) as { docs?: KbDocMeta[] };
       setDocs(data.docs ?? []);
     } catch {
@@ -75,37 +112,118 @@ export default function Home() {
     }
   }, []);
 
+  const fetchKbs = useCallback(async () => {
+    setKbsLoading(true);
+    try {
+      const res = await fetch('/api/kbs');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as KbSummary[];
+      setKbs(Array.isArray(data) ? data : []);
+      setKbError(null);
+    } catch {
+      setKbs([]);
+      setKbError('知识库列表获取失败，请确认后端已启动');
+    } finally {
+      setKbsLoading(false);
+    }
+  }, []);
+
+  /** 初始化：从 localStorage 恢复当前库 id（失效回退 default） */
+  const restoreKb = useCallback(async () => {
+    let saved = 'default';
+    try {
+      saved = window.localStorage.getItem(CURRENT_KB_KEY) ?? 'default';
+    } catch {
+      // 隐私模式下 localStorage 不可用，回落 default
+    }
+    let valid = saved || 'default';
+    const ensureValid = async () => {
+      try {
+        const res = await fetch('/api/kbs');
+        const data = (await res.json()) as KbSummary[];
+        const list = Array.isArray(data) ? data : [];
+        setKbs(list);
+        if (list.length > 0 && !list.some((k) => k.kbId === saved)) {
+          valid = 'default';
+        }
+      } catch {
+        valid = 'default';
+      }
+    };
+    await ensureValid();
+    setCurrentKbId(valid);
+    try {
+      window.localStorage.setItem(CURRENT_KB_KEY, valid);
+    } catch {
+      // 忽略
+    }
+    await refreshKb(valid);
+  }, [refreshKb]);
+
+  /** 切换当前库（写 localStorage + 刷新档案柜与列表） */
+  const switchKb = useCallback(
+    async (kbId: string) => {
+      setCurrentKbId(kbId);
+      try {
+        window.localStorage.setItem(CURRENT_KB_KEY, kbId);
+      } catch {
+        // 忽略
+      }
+      await refreshKb(kbId);
+    },
+    [refreshKb],
+  );
+
   useEffect(() => {
     void (async () => {
-      const [modelsRes, configRes] = await Promise.all([
-        fetch('/api/models').catch(() => null),
-        fetch('/api/config').catch(() => null),
-      ]);
-      if (modelsRes?.ok) {
-        const data = (await modelsRes.json()) as { models?: ModelInfo[] };
-        setModels(data.models ?? []);
-      }
+      const configRes = await fetch('/api/config').catch(() => null);
       if (configRes?.ok) {
         const data = (await configRes.json()) as Partial<RagConfig>;
-        setConfig({ ...DEFAULT_CONFIG, ...data });
+        setConfig({
+          ...DEFAULT_CONFIG,
+          ...data,
+          stages: { ...DEFAULT_CONFIG.stages, ...(data.stages ?? {}) },
+          chunking: { ...DEFAULT_CONFIG.chunking, ...(data.chunking ?? {}) },
+        });
       } else {
         setConfig(DEFAULT_CONFIG);
       }
-      await refreshKb();
+      await restoreKb();
     })();
-  }, [refreshKb]);
+  }, [restoreKb]);
 
-  const updateConfig = useCallback((patch: Partial<RagConfig>) => {
-    setConfig((prev) => {
-      const next = { ...(prev ?? DEFAULT_CONFIG), ...patch };
-      void fetch('/api/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
+  const updateConfig = useCallback(
+    (patch: Partial<RagConfig>) => {
+      let put!: Promise<void>;
+      setConfig((prev) => {
+        const next = {
+          ...(prev ?? DEFAULT_CONFIG),
+          ...patch,
+        };
+        put = fetch('/api/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(next),
+        })
+          .then((res) => {
+            if (!res.ok) {
+              setPutError(
+                `配置保存失败（HTTP ${res.status}）：请确认已通过 python main.py 启动后端（端口 8000）`,
+              );
+            } else {
+              setPutError(null);
+            }
+          })
+          .catch(() => {
+            setPutError('配置保存失败：后端未启动或网络异常，请先运行 python main.py');
+          })
+          .then(() => undefined);
+        return next;
       });
-      return next;
-    });
-  }, []);
+      return put;
+    },
+    [],
+  );
 
   const applyEvent = useCallback((ev: AskEvent) => {
     if (ev.type === 'stage') {
@@ -113,7 +231,12 @@ export default function Home() {
         const base: TraceState = prev ?? { current: ev.stage };
         switch (ev.stage) {
           case 'intent':
-            return { ...base, intent: ev.data.intent, current: 'intent' };
+            return {
+              ...base,
+              intent: ev.data.intent,
+              intentDetail: ev.data,
+              current: 'intent',
+            };
           case 'retrieve':
             return {
               ...base,
@@ -138,6 +261,22 @@ export default function Home() {
       });
       return;
     }
+    if (ev.type === 'thinking') {
+      if (thinkingStartRef.current == null) thinkingStartRef.current = Date.now();
+      thinkingEndRef.current = Date.now();
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'assistant') {
+          next[next.length - 1] = {
+            ...last,
+            thinking: (last.thinking ?? '') + ev.text,
+          };
+        }
+        return next;
+      });
+      return;
+    }
     if (ev.type === 'delta') {
       setMessages((prev) => {
         const next = [...prev];
@@ -159,6 +298,12 @@ export default function Home() {
             content: last.content || ev.answer,
             sources: ev.sources,
             streaming: false,
+            thinking: last.thinking ?? '',
+            thinkingMs:
+              thinkingStartRef.current != null
+                ? (thinkingEndRef.current ?? thinkingStartRef.current) -
+                  thinkingStartRef.current
+                : undefined,
           };
         }
         return next;
@@ -194,24 +339,21 @@ export default function Home() {
         { role: 'user', content: question },
         { role: 'assistant', content: '', streaming: true },
       ]);
+      thinkingStartRef.current = null;
+      thinkingEndRef.current = null;
 
       const controller = new AbortController();
       abortRef.current = controller;
-      const cfg = configRef.current;
       try {
+        // 后端自行读取 stored config，body 只传 question
         const res = await fetch('/api/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question,
-            config: {
-              model: cfg.model,
-              temperature: cfg.temperature,
-              topK: cfg.topK,
-              bm25Weight: cfg.bm25Weight,
-              vectorWeight: cfg.vectorWeight,
-              enableValidation: cfg.enableValidation,
-            },
+            config: {},
+            kbId: currentKbIdRef.current,
+            sessionId: sessionIdRef.current,
           }),
           signal: controller.signal,
         });
@@ -282,10 +424,23 @@ export default function Home() {
     />
   );
 
-  const kbPanel = <KbPanel docs={docs} onMutated={refreshKb} />;
+  const kbPanel = (
+    <KbPanel
+      docs={docs}
+      currentKbId={currentKbId}
+      onMutated={() => refreshKb(currentKbId)}
+    />
+  );
+
+  const chunking = config?.chunking ?? DEFAULT_CONFIG.chunking;
 
   return (
     <div className="flex h-dvh flex-col">
+      {putError && (
+        <div className="border-b border-accent/40 bg-accent/10 px-4 py-1.5 text-xs text-accent">
+          {putError}
+        </div>
+      )}
       <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b bg-sidebar/80 px-3 backdrop-blur-sm lg:px-4">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
@@ -336,24 +491,6 @@ export default function Home() {
             </SheetContent>
           </Sheet>
 
-          <Select
-            value={config?.model ?? ''}
-            onValueChange={(v) => updateConfig({ model: v })}
-            disabled={!config || streaming}
-          >
-            <SelectTrigger className="h-9 w-32 text-xs sm:w-56">
-              <SelectValue placeholder="选择模型" />
-            </SelectTrigger>
-            <SelectContent>
-              {models.map((m) => (
-                <SelectItem key={m.id} value={m.id} className="text-xs">
-                  <span className="font-medium">{m.label}</span>
-                  <span className="text-muted-foreground"> · {m.note}</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -369,6 +506,14 @@ export default function Home() {
             <PopoverContent align="end" className="w-72">
               {config ? (
                 <div className="space-y-4">
+                  <Button
+                    variant="outline"
+                    className="h-8 w-full font-serif text-xs"
+                    onClick={() => setConfigOpen(true)}
+                    disabled={streaming}
+                  >
+                    配置模型
+                  </Button>
                   <p className="font-serif text-xs font-semibold">参数</p>
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
@@ -443,6 +588,49 @@ export default function Home() {
                       }
                     />
                   </div>
+                  <div className="space-y-3 border-t pt-3">
+                    <p className="font-serif text-xs font-semibold">切块</p>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span>块最大字符</span>
+                        <span className="font-mono">{chunking.maxChars}</span>
+                      </div>
+                      <Slider
+                        value={[chunking.maxChars]}
+                        min={200}
+                        max={2000}
+                        step={50}
+                        onValueChange={(v) =>
+                          updateConfig({
+                            chunking: {
+                              ...config.chunking,
+                              maxChars: v[0] ?? 600,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span>相邻重叠</span>
+                        <span className="font-mono">{chunking.overlap}</span>
+                      </div>
+                      <Slider
+                        value={[chunking.overlap]}
+                        min={0}
+                        max={200}
+                        step={10}
+                        onValueChange={(v) =>
+                          updateConfig({
+                            chunking: {
+                              ...config.chunking,
+                              overlap: v[0] ?? 50,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -456,7 +644,28 @@ export default function Home() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="hidden w-72 shrink-0 border-r bg-sidebar/40 lg:block">
+        {/* 左栏自身就是小型滚动页：列表滚、底部固定，底线与中/右栏对齐 */}
+        <aside className="hidden h-full min-h-0 w-72 shrink-0 border-r bg-sidebar/40 lg:flex lg:flex-col">
+          <div className="border-b px-3 py-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 min-w-0 w-full justify-between gap-1.5 font-serif text-xs"
+              aria-label="切换知识库"
+              onClick={() => {
+                setKbSwitcherOpen(true);
+                void fetchKbs();
+              }}
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Library className="size-3.5 shrink-0 text-primary" />
+                <span className="truncate">
+                  {kbs.find((k) => k.kbId === currentKbId)?.name ?? '默认知识库'}
+                </span>
+              </span>
+              <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+            </Button>
+          </div>
           {kbPanel}
         </aside>
         <main className="min-w-0 flex-1">
@@ -471,6 +680,104 @@ export default function Home() {
           {tracePanel}
         </aside>
       </div>
+
+      {config && (
+        <ModelConfigDialog
+          open={configOpen}
+          onOpenChange={setConfigOpen}
+          config={config}
+          onSave={updateConfig}
+          promptSlot={
+            <PromptConfigDialog
+              open={promptOpen}
+              onOpenChange={setPromptOpen}
+            />
+          }
+          onOpenPrompt={() => setPromptOpen(true)}
+        />
+      )}
+      <KbManagerDialog
+        open={kbSwitcherOpen}
+        onOpenChange={setKbSwitcherOpen}
+        currentKbId={currentKbId}
+        kbs={kbs}
+        loading={kbsLoading}
+        actionPending={kbActionPending}
+        onSelect={(kbId) => {
+          void switchKb(kbId).then(() => void fetchKbs());
+          setKbSwitcherOpen(false);
+        }}
+        onRename={async (oldKbId, newName) => {
+          setKbActionPending(true);
+          try {
+            const res = await fetch(`/api/kbs/${encodeURIComponent(oldKbId)}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: newName }),
+            });
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            if (!res.ok || data.error) {
+              throw new Error(data.error ?? `改名失败（HTTP ${res.status}）`);
+            }
+            await fetchKbs();
+            // 当前库改名后刷新档案柜标题区（不影响 kbId）
+            await refreshKb(currentKbId);
+          } catch (e) {
+            setKbError(e instanceof Error ? e.message : '改名失败');
+            throw e;
+          } finally {
+            setKbActionPending(false);
+          }
+        }}
+        onCreate={async (name) => {
+          setKbActionPending(true);
+          try {
+            const res = await fetch('/api/kbs', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name }),
+            });
+            const data = (await res.json().catch(() => ({}))) as { error?: string; kbId?: string };
+            if (!res.ok || data.error) {
+              throw new Error(data.error ?? `新建失败（HTTP ${res.status}）`);
+            }
+            await fetchKbs();
+            // 新建后自动切到新库
+            if (data.kbId) {
+              await switchKb(data.kbId);
+            }
+          } catch (e) {
+            setKbError(e instanceof Error ? e.message : '新建失败');
+            throw e;
+          } finally {
+            setKbActionPending(false);
+          }
+        }}
+        onDelete={async (kbId) => {
+          setKbActionPending(true);
+          try {
+            const res = await fetch(`/api/kbs?kbId=${encodeURIComponent(kbId)}`, {
+              method: 'DELETE',
+            });
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            if (!res.ok || data.error) {
+              throw new Error(data.error ?? `删除失败（HTTP ${res.status}）`);
+            }
+            await fetchKbs();
+          } catch (e) {
+            setKbError(e instanceof Error ? e.message : '删除失败');
+            throw e;
+          } finally {
+            setKbActionPending(false);
+          }
+        }}
+        onCurrentDeleted={() => switchKb('default')}
+      />
+      {kbError && (
+        <div className="fixed bottom-4 left-1/2 z-[60] max-w-sm -translate-x-1/2 rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-accent shadow-sm">
+          {kbError}
+        </div>
+      )}
     </div>
   );
 }

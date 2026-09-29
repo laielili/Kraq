@@ -165,8 +165,11 @@ Desktop.ini
 .coze-logs
 .codegraph/
 /data/
+# 本地模型权重（laya-multilingual 等，体积大，随项目目录本地存放不入库）
+/models/
 
 
-#AI-AGents
+#AI-Agents
 AGENTS.md
 DESIGN.md
+SOP.md

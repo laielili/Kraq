@@ -1,24 +1,28 @@
 'use client';
 
-import { useState } from 'react';
-import { FileText, Loader2, Plus, Trash2 } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { FileText, FolderOpen, Loader2, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import type { KbDocMeta } from '@/lib/rag/types';
 
 interface KbPanelProps {
   docs: KbDocMeta[];
+  /** 当前知识库 id，所有档案接口均带上 */
+  currentKbId: string;
   onMutated: () => Promise<void>;
 }
 
-export function KbPanel({ docs, onMutated }: KbPanelProps) {
+export function KbPanel({ docs, currentKbId, onMutated }: KbPanelProps) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function add() {
     if (!content.trim() || busy) return;
@@ -28,7 +32,11 @@ export function KbPanel({ docs, onMutated }: KbPanelProps) {
       const res = await fetch('/api/kb', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title.trim(), content: content.trim() }),
+        body: JSON.stringify({
+          title: title.trim(),
+          content: content.trim(),
+          kbId: currentKbId,
+        }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok || data.error) throw new Error(data.error ?? '添加失败');
@@ -42,14 +50,45 @@ export function KbPanel({ docs, onMutated }: KbPanelProps) {
     }
   }
 
+  async function uploadFile() {
+    const file = fileInputRef.current?.files?.[0];
+    if (!file || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const text = await file.text();
+      const res = await fetch('/api/kb/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: file.name,
+          title: file.name.replace(/\.[^.]+$/, ''),
+          content: text,
+          kbId: currentKbId,
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok || data.error) throw new Error(data.error ?? '上传失败');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      await onMutated();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '上传失败');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove(id: string) {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/kb?id=${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-      });
+      const res = await fetch(
+        `/api/kb?id=${encodeURIComponent(id)}&kbId=${encodeURIComponent(currentKbId)}`,
+        {
+          method: 'DELETE',
+        },
+      );
       const data = (await res.json()) as { error?: string };
       if (!res.ok || data.error) throw new Error(data.error ?? '删除失败');
       await onMutated();
@@ -62,14 +101,6 @@ export function KbPanel({ docs, onMutated }: KbPanelProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <div>
-          <h2 className="font-serif text-sm font-semibold">档案柜</h2>
-          <p className="text-[11px] text-muted-foreground">
-            知识库 · {docs.length} 份资料
-          </p>
-        </div>
-      </div>
       <ScrollArea className="min-h-0 flex-1">
         <ul className="space-y-1.5 p-3">
           {docs.length === 0 && (
@@ -118,6 +149,30 @@ export function KbPanel({ docs, onMutated }: KbPanelProps) {
         </ul>
       </ScrollArea>
       <div className="space-y-2 border-t bg-background/60 p-3">
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.md"
+            className="hidden"
+            onChange={() => void uploadFile()}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 flex-1 gap-1.5 text-xs"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={busy}
+          >
+            {busy ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <FolderOpen className="size-3.5" />
+            )}
+            上传 txt / md 文件
+          </Button>
+        </div>
+        <Separator className="bg-border/60" />
         <Input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -144,9 +199,6 @@ export function KbPanel({ docs, onMutated }: KbPanelProps) {
           )}
           加入档案柜
         </Button>
-        <p className="text-[10px] leading-4 text-muted-foreground">
-          保存后将自动调用向量化服务，供语义检索使用
-        </p>
       </div>
     </div>
   );

@@ -19,7 +19,7 @@ const inside = (root, candidate) => candidate === root || candidate.startsWith(`
 const onDrive = inside(drive, source);
 const digest = value => createHash('sha256').update(value).digest('hex');
 // Separate from /tmp/nm: older dependency helpers clean unknown entries there.
-const cacheRoot = path.join(os.tmpdir(), `coze-web-${process.getuid()}`);
+const cacheRoot = path.join(os.tmpdir(), `coze-web-${0}`);
 const projectCache = path.join(cacheRoot, digest(source));
 const exclusions = [
   'node_modules', '.git', '/logs', '.pnpm-store', '.next', '.nuxt', '.output',
@@ -79,7 +79,7 @@ function run(command, args, cwd, env = process.env) {
 function ensureCache() {
   for (const dir of [cacheRoot, projectCache]) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    if (fs.lstatSync(dir).isSymbolicLink() || fs.statSync(dir).uid !== process.getuid()) {
+    if (fs.lstatSync(dir).isSymbolicLink() || fs.statSync(dir).uid !== 0) {
       throw new Error(`Refusing unmanaged workspace directory: ${dir}`);
     }
     if (inside(drive, fs.realpathSync(dir))) {

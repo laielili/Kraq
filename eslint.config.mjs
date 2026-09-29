@@ -53,6 +53,9 @@ const eslintConfig = defineConfig([
     'dist/',
     // Script files (CommonJS):
     'scripts/**/*.{js,cjs}',
+    // Python virtualenvs:
+    '.venv/',
+    'venv/',
   ]),
 ]);
 

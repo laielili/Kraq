@@ -27,6 +27,11 @@ const INTENT_LABELS: Record<IntentLabel, string> = {
   OUT_OF_SCOPE: '超出范围',
 };
 
+const FINAL_BY_LABELS: Record<string, string> = {
+  llm: '端点 LLM 判定',
+  rule: '规则兜底',
+};
+
 const STAGES: Array<{ name: StageName; label: string; icon: typeof Target }> = [
   { name: 'intent', label: '意图识别', icon: Target },
   { name: 'retrieve', label: '混合检索', icon: Search },
@@ -159,6 +164,11 @@ export function TracePanel({
                 >
                   {trace.intent ? INTENT_LABELS[trace.intent] : '—'}
                 </Badge>
+                {trace.intentDetail?.finalBy && (
+                  <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+                    最终：{FINAL_BY_LABELS[trace.intentDetail.finalBy] ?? trace.intentDetail.finalBy}
+                  </p>
+                )}
               </StageCard>
 
               <StageCard
