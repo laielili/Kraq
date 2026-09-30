@@ -114,76 +114,45 @@ def heuristic_rerank(
     return scored[:top_n]
 
 
-INTENT_LABELS = ("FAQ", "SEARCH", "CLARIFY", "OUT_OF_SCOPE")
-
-_CLARIFY_PATTERNS: Tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p)
-    for p in (
-        r"\btell me about it\b",
-        r"\bwhat about (?:that|this|it|those|these|them)\b",
-        r"\bthat thing\b",
-        r"\bthis thing\b",
-        r"\babout (?:it|that|this|them)\s*[?!.]*\s*$",
-        r"\byou know (?:what|which one)\b",
-        r"^(那|这)(个|件|些)?(东西|事情|事)?(呢|怎么样|如何)?[?？。！!]*$",
-    )
-)
-
-_SEARCH_PATTERNS: Tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p)
-    for p in (
-        r"\b(?:find|show|get|fetch|search|look up|list)\b[^.?!]*\b(?:articles?|tutorials?|posts?|videos?|results?|resources?|papers?|guides?|docs?|documentation)\b",
-        r"\b(?:find|show|get|fetch|search|list)\s+me\b",
-        r"\b(?:latest|newest|recent|top\s+\d+)\b[^.?!]*(?:articles?|tutorials?|posts?|videos?|results?|resources?|papers?|guides?|news)\b",
-        r"\bsearch (?:the )?(?:web|internet|docs?)\b",
-        r"(?:找|搜|检索|搜索).{0,12}(?:文章|资料|文档|论文|新闻|教程|结果|资源|视频)",
-        r"(?:帮我)?(?:找一下|搜一下|查一下)",
-    )
-)
+# 二分类意图（FAQ | OUT_OF_SCOPE）。SEARCH 已并入 FAQ-RAG；CLARIFY 不再是
+# 判定标签——它在 FAQ 检索途中由「最高余弦分数 < clarifyThreshold」触发。
+INTENT_LABELS = ("FAQ", "OUT_OF_SCOPE")
 
 FAQ_PATTERNS: Tuple[re.Pattern[str], ...] = tuple(
     re.compile(p)
     for p in (
-        r"\bwhat(?:'s| is| are) your\b",
-        r"\bhow (?:do|can|should|would)\s+(?:i|you|we)\b",
-        r"\bwhere (?:is|are|do|can)\b[^.?!]*\byour\b",
-        r"\bwhen (?:is|are|do|can)\b[^.?!]*\byour\b",
-        r"\bdo you (?:support|have|offer|accept|provide)\b",
-        r"\bcan i (?:cancel|upgrade|downgrade|return|refund|change|reset|delete)\b",
-        r"\breset (?:my|the)\s+\w+\b",
-        r"\bmy (?:account|order|password|subscription|invoice|profile|billing)\b",
-        r"\bwhat is\b",
-        r"\bwhat are\b",
-        r"\bhow to\b",
+        # 中文知识问答
         r"什么是|是什么",
         r"怎么|如何",
         r"为什么|为啥",
-        r"是否",
+        r"是否|能不能|可以吗",
         r"谁是|是谁",
         r"什么时候|何时",
         r"哪里|哪儿|何处",
         r"介绍(?:一下)?",
+        r"找|搜|检索|搜索|查一下",
+        # 英文知识问答
+        r"\bwhat(?:'s| is| are)\b",
+        r"\bhow (?:to|do|can|should|would)\b",
+        r"\bwhere (?:is|are|do|can)\b",
+        r"\bwhen (?:is|are|do|can)\b",
+        r"\bwhy (?:is|do|does|did)\b",
+        r"\bdo you (?:support|have|offer|accept|provide)\b",
+        r"\bcan i\b",
+        r"\bfind|search|look up|list\b",
     )
 )
 
-INTENT_GROUP_ORDER = ("CLARIFY", "SEARCH", "FAQ")
-
-INTENT_PATTERN_GROUPS: Dict[str, Iterable[re.Pattern[str]]] = {
-    "CLARIFY": list(_CLARIFY_PATTERNS),
-    "SEARCH": list(_SEARCH_PATTERNS),
-    "FAQ": list(FAQ_PATTERNS),
-}
-
 
 def classify_intent(text: str) -> str:
-    """Ported from intent.ts — rule-based fallback classifier."""
+    """Rule-based fallback, binary: any knowledge-question pattern -> FAQ,
+    otherwise OUT_OF_SCOPE. Mirrors the LLM INTENT_SYSTEM label set."""
     normalized = text.strip().lower()
     if not normalized:
         return "OUT_OF_SCOPE"
-    for label in INTENT_GROUP_ORDER:
-        for pattern in INTENT_PATTERN_GROUPS[label]:
-            if pattern.search(normalized):
-                return label
+    for pattern in FAQ_PATTERNS:
+        if pattern.search(normalized):
+            return "FAQ"
     return "OUT_OF_SCOPE"
 
 

@@ -6,7 +6,17 @@ kb_id field on the first intent stage + done event so the frontend can pin
 which KB produced the answer.
 
 Event order: intent -> retrieve -> rerank -> generate -> delta* -> validate -> done.
-Intent stage uses the configured LLM (INTENT_SYSTEM classification prompt) ->
+Intent is BINARY (FAQ | OUT_OF_SCOPE): the stage LLM classifies (INTENT_SYSTEM;
+SEARCH merged into FAQ, CLARIFY is NOT an LLM label) -> rule fallback (search.
+classify_intent, same label set). FAQ flow: vector search first — if the top-1
+cosine score is below config clarifyThreshold, the CLARIFY branch runs (skip
+BM25/rerank; the already-retrieved results go to generation with a 澄清-goal
+prompt instead of an answer-goal; no hallucination validation); otherwise the
+full RAG chain runs (BM25 -> RRF -> rerank -> cited generation -> validation).
+OOS flow: no RAG — the refusal line plus an LLM free answer about the user's
+input (OOS goal prompt, no sources). Per-intent generation goals are
+agent-level templates: config.json goalPrompt*, defaults in prompts/goal_*_default.md
+(mirror systemPrompt's null-follows-global convention).
 Vectors live in Chroma (chroma_store.query); kb.json stores no embeddings —
 embeddingMeta is a {model, dim, upserted} marker only.
 """
@@ -19,7 +29,7 @@ import re
 from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional, Tuple
 
 from . import chroma_store
-from .common import first_json_object
+from .common import PROJECT_ROOT, first_json_object
 from .models_client import (
     chat_invoke,
     chat_stream,
@@ -44,13 +54,56 @@ from .store import (
 )
 
 INTENT_SYSTEM = (
-    "你是知识库问答系统的意图分类器。FAQ=询问知识库资料内容的问题（如公司制度、流程、条款）；"
-    "SEARCH=想查找、定位或列出知识库中的资料；CLARIFY=表达不完整或指代不明，需要先澄清；"
-    "OUT_OF_SCOPE=与知识库无关的消息（如闲聊、天气、新闻、写代码）。"
-    "只输出 FAQ、SEARCH、CLARIFY、OUT_OF_SCOPE 之一。"
+    "你是知识库问答系统的意图分类器。FAQ=用户想向知识库提问或查找资料，"
+    "期望得到基于知识的回答或结果（问题含义模糊也算 FAQ，后续会通过澄清确认）；"
+    "OUT_OF_SCOPE=与知识库问答无关的消息（如闲聊、天气、新闻、写代码）。"
+    "只输出 FAQ 或 OUT_OF_SCOPE 之一。"
 )
-INTENT_PARSE_RE = re.compile(r"(FAQ|SEARCH|CLARIFY|OUT_OF_SCOPE)")
-VALID_INTENTS = ("FAQ", "SEARCH", "CLARIFY", "OUT_OF_SCOPE")
+INTENT_PARSE_RE = re.compile(r"(FAQ|OUT_OF_SCOPE)")
+VALID_INTENTS = ("FAQ", "OUT_OF_SCOPE")
+
+# 意图生成目标：agent 级模板（config.goalPrompt*），未定制回落 prompts/goal_*_default.md
+_GOAL_FILES: Dict[str, str] = {
+    "FAQ": "goal_faq_default.md",
+    "CLARIFY": "goal_clarify_default.md",
+    "OUT_OF_SCOPE": "goal_oos_default.md",
+}
+
+_FALLBACK_GOALS: Dict[str, str] = {
+    "FAQ": "根据编号资料回答用户问题；在答案中保持 [n] 引用标注；资料不足时明确说明，不要编造。",
+    "CLARIFY": (
+        "用户的问题不够明确，且检索结果置信度偏低。请根据下面的候选资料判断用户"
+        "最可能想问什么，给出两三种可能的理解，并以一个具体的问题向用户澄清确认。"
+        "不要给出答案本身，不要编造内容。"
+    ),
+    "OUT_OF_SCOPE": (
+        "用户的问题与本知识库的资料范围无关。请以知识库问答助手的身份，基于常识"
+        "友好地回应用户：简短回应话题本身，并说明此类问题不在本知识库的服务范围内、"
+        "建议咨询相关领域渠道。不要编造知识库内容，不要使用 [n] 引用编号。"
+    ),
+}
+
+_CONFIG_GOAL_KEYS: Dict[str, str] = {
+    "FAQ": "goalPromptFaq",
+    "CLARIFY": "goalPromptClarify",
+    "OUT_OF_SCOPE": "goalPromptOos",
+}
+
+
+def intent_goal(cfg: Mapping[str, Any], route: str) -> str:
+    """route ∈ FAQ / CLARIFY / OUT_OF_SCOPE: agent-level custom goal in config,
+    else the prompts/goal_*_default.md sample, else the hardcoded fallback."""
+    text = str(cfg.get(_CONFIG_GOAL_KEYS[route]) or "").strip()
+    if text:
+        return text
+    path = PROJECT_ROOT / "prompts" / _GOAL_FILES[route]
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        text = ""
+    if text:
+        return text
+    return _FALLBACK_GOALS[route]
 
 
 async def _intent_llm_invoke(cfg: Mapping[str, Any], question: str, session_id: str = "") -> Optional[str]:
@@ -327,8 +380,84 @@ def rule_fallback_validate(answer: str, source_count: int, citations: List[int])
 
 
 # --------------------------------------------------------------------------
-# run_ask
+# generation helpers (shared by FAQ-RAG / CLARIFY / OOS paths)
 # --------------------------------------------------------------------------
+async def _generate_stream(
+    cfg: Mapping[str, Any],
+    question: str,
+    gen_ep: Mapping[str, Any],
+    gen_model: str,
+    session_id: str,
+    *,
+    contexts_docs: List[Mapping[str, Any]],
+    docs_by_id: Mapping[str, Mapping[str, Any]],
+    goal: str,
+    cite: bool,
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """Stream the generation stage. System = agent-level global prompt
+    (config.systemPrompt, else prompts/system_kb_default.md) + the intent
+    goal. User = numbered contexts (when cite, else 候选资料 wording) +
+    question. Yields delta/thinking events and finally one internal
+    {"type": "done_answer", "answer"} frame (consumed by the caller, never
+    sent to the client). Emits {"type": "error"} and stops on failure."""
+    sys_prompt = cfg.get("systemPrompt") or default_system_prompt()
+    contexts_block = build_contexts_block(contexts_docs, docs_by_id)
+    user_text = (
+        RAG_USER_TEMPLATE.format(contexts=contexts_block, question=question)
+        if cite
+        else f"候选资料（仅供判断，不要直接回答）：\n{contexts_block}\n\n用户消息：{question}"
+    )
+    messages = [
+        {"role": "system", "content": f"{sys_prompt}\n\n本轮生成目标：{goal}"},
+        {"role": "user", "content": user_text},
+    ]
+    chunks: List[str] = []
+    try:
+        async for content, thinking in chat_stream(
+            gen_ep, gen_model, messages, float(cfg.get("temperature") or 0.7),
+            session_id=session_id,
+        ):
+            if content:
+                chunks.append(content)
+                yield {"type": "delta", "text": content}
+            if thinking:
+                yield {"type": "thinking", "text": thinking}
+    except Exception as e:
+        yield {"type": "error", "message": f"生成模型调用失败：{e}（请检查右上角「配置模型」与端点可达性）"}
+        return
+    yield {"type": "done_answer", "answer": "".join(chunks)}
+
+
+async def _oos_answer(
+    cfg: Mapping[str, Any],
+    question: str,
+    gen_ep: Mapping[str, Any],
+    gen_model: str,
+    session_id: str,
+) -> Optional[str]:
+    """OOS: refusal header + LLM free answer over the raw user input (no RAG).
+    None = generation failed (caller falls back to the fixed refusal line)."""
+    goal = intent_goal(cfg, "OUT_OF_SCOPE")
+    messages = [
+        {"role": "system", "content": goal},
+        {"role": "user", "content": str(question)},
+    ]
+    try:
+        parts: List[str] = []
+        async for content, _thinking in chat_stream(
+            gen_ep, gen_model, messages, float(cfg.get("temperature") or 0.7),
+            session_id=session_id,
+        ):
+            if content:
+                parts.append(content)
+        text = "".join(parts).strip()
+        if not text:
+            return None
+        return f"{OUT_OF_SCOPE_ANSWER}\n\n{text}"
+    except Exception:
+        return None
+
+
 async def run_ask(
     question: str,
     kb_id: str = DEFAULT_KB_ID,
@@ -343,7 +472,7 @@ async def run_ask(
         kb_id = DEFAULT_KB_ID
 
     try:
-        # ------- intent (configured LLM -> rule fallback) --------------------
+        # ------- intent (binary: FAQ | OUT_OF_SCOPE; LLM -> rule fallback) ----
         intent: Optional[str] = None
         detail: Dict[str, Any] = {}
 
@@ -358,8 +487,18 @@ async def run_ask(
         detail["intent"] = intent
         yield {"type": "stage", "stage": "intent", "data": detail, "kbId": kb_id}
 
+        gen_ep, gen_model = _resolve_stage(cfg, "generate")
+        if gen_ep is None:
+            yield {"type": "error", "message": GEN_NOT_CONFIGURED}
+            return
+
+        # ---------------- OOS: 拒答头 + LLM 自由作答（不走 RAG）--------------
         if intent == "OUT_OF_SCOPE":
-            yield {"type": "done", "answer": OUT_OF_SCOPE_ANSWER, "sources": [], "kbId": kb_id}
+            oos_answer = await _oos_answer(cfg, question, gen_ep, gen_model, session_id)
+            if oos_answer is None:
+                # 生成失败：退回纯固定拒答话术，不硬失败
+                oos_answer = OUT_OF_SCOPE_ANSWER
+            yield {"type": "done", "answer": oos_answer, "sources": [], "kbId": kb_id}
             return
 
         if not docs:
@@ -378,12 +517,39 @@ async def run_ask(
             yield {"type": "done", "answer": NO_DOCS_ANSWER, "sources": [], "kbId": kb_id}
             return
 
-        # ---------------- retrieve: BM25 + vector + RRF --------------------
+        # ---------------- retrieve: vector-first gate -> BM25+RRF -----------
         candidate_k = _retrieve_top_k(cfg)
-        bm25_list = bm25_search(question, docs, candidate_k)
         vector_list, vector_available = await _vector_candidates(
             kb_id, cfg, docs, question, candidate_k
         )
+        top1_score = float(vector_list[0]["score"]) if vector_list else 0.0
+        threshold = float(cfg.get("clarifyThreshold") or 0.72)
+        # CLARIFY 分支：最高余弦分数低于阈值 → 跳过 BM25/rerank，拿已检索结果
+        # 进生成，目标引导为「澄清」；无向量服务时（0.0 < 阈值）同样触发。
+        clarify = vector_available and top1_score < threshold
+        docs_by_id = {str(d["id"]): d for d in docs}
+
+        if clarify:
+            detail["clarify"] = True
+            detail["top1Score"] = _round4(top1_score)
+            detail["threshold"] = _round4(threshold)
+            yield {"type": "stage", "stage": "intent", "data": detail, "kbId": kb_id}
+            # 静默短路：不发 retrieve/rerank 事件，直接进生成
+            async for ev in _generate_stream(
+                cfg,
+                question,
+                gen_ep,
+                gen_model,
+                session_id,
+                contexts_docs=vector_list,
+                docs_by_id=docs_by_id,
+                goal=intent_goal(cfg, "CLARIFY"),
+                cite=False,
+            ):
+                yield ev
+            return
+
+        bm25_list = bm25_search(question, docs, candidate_k)
         fused = rrf_fuse(
             bm25=bm25_list,
             vector=vector_list,
@@ -395,6 +561,8 @@ async def run_ask(
             "stage": "retrieve",
             "data": {
                 "vectorAvailable": vector_available,
+                "top1Score": _round4(top1_score),
+                "threshold": _round4(threshold),
                 "bm25": [{"id": str(r["id"]), "score": _round4(r["score"])} for r in bm25_list],
                 "vector": [{"id": str(r["id"]), "score": _round4(r["score"])} for r in vector_list],
                 "fused": [{"id": str(r["id"]), "score": _round4(r["score"])} for r in fused],
@@ -455,38 +623,27 @@ async def run_ask(
             "kbId": kb_id,
         }
 
-        # ---------------- generate ------------------------------------------
-        gen_ep, gen_model = _resolve_stage(cfg, "generate")
-        if gen_ep is None:
-            yield {"type": "error", "message": GEN_NOT_CONFIGURED}
-            return
+        # ---------------- generate (FAQ-RAG: intent goal + citations) --------
         yield {"type": "stage", "stage": "generate", "data": {"model": gen_model}, "kbId": kb_id}
-        # 系统提示词：Agent 级全局定制（config.systemPrompt）优先，
-        # 未定制时回落 prompts/system_kb_default.md——与知识库无关
-        sys_prompt = cfg.get("systemPrompt") or default_system_prompt()
-        messages = [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": RAG_USER_TEMPLATE.format(
-                contexts=build_contexts_block(reranked, docs_by_id),
-                question=question,
-            )},
-        ]
-        # ... stream below passes session_id so opencode-style gateways keep
-        # one stable x-opencode-session per conversation (prompt-cache hits)
-        chunks: List[str] = []
-        thinking_parts: List[str] = []
-        try:
-            async for content, thinking in chat_stream(gen_ep, gen_model, messages, float(cfg.get("temperature") or 0.7), session_id=session_id):
-                if content:
-                    chunks.append(content)
-                    yield {"type": "delta", "text": content}
-                if thinking:
-                    thinking_parts.append(thinking)
-                    yield {"type": "thinking", "text": thinking}
-        except Exception as e:
-            yield {"type": "error", "message": f"生成模型调用失败：{e}（请检查右上角「配置模型」与端点可达性）"}
+        answer = ""
+        async for ev in _generate_stream(
+            cfg,
+            question,
+            gen_ep,
+            gen_model,
+            session_id,
+            contexts_docs=reranked,
+            docs_by_id=docs_by_id,
+            goal=intent_goal(cfg, "FAQ"),
+            cite=True,
+        ):
+            if ev.get("type") == "done_answer":
+                answer = ev.get("answer") or ""
+                break
+            yield ev
+        if not answer:
+            # 生成已 yield error 并终止（或空流）：done_answer 缺席，直接返回
             return
-        answer = "".join(chunks)
 
         # ---------------- validate -------------------------------------------
         validation = None

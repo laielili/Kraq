@@ -55,6 +55,7 @@ const DEFAULT_CONFIG: RagConfig = {
   rerankTopN: 5,
   bm25Weight: 0.4,
   vectorWeight: 0.6,
+  clarifyThreshold: 0.72,
   enableValidation: true,
   chunking: { maxChars: 600, overlap: 50 },
 };
@@ -515,34 +516,42 @@ export default function Home() {
                     配置模型
                   </Button>
                   <p className="font-serif text-xs font-semibold">参数</p>
+                  <p className="font-serif text-xs font-semibold">检索</p>
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span>生成温度</span>
+                      <span>最高余弦分数置信阈值</span>
                       <span className="font-mono">
-                        {config.temperature.toFixed(1)}
+                        {config.clarifyThreshold.toFixed(2)}
                       </span>
                     </div>
                     <Slider
-                      value={[config.temperature]}
+                      value={[config.clarifyThreshold]}
                       min={0}
                       max={1}
-                      step={0.1}
+                      step={0.02}
                       onValueChange={(v) =>
-                        updateConfig({ temperature: v[0] ?? 0.7 })
+                        updateConfig({ clarifyThreshold: v[0] ?? 0.72 })
                       }
                     />
                   </div>
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span>引用资料条数</span>
-                      <span className="font-mono">{config.topK}</span>
+                      <span>召回候选数</span>
+                      <span className="font-mono">{config.retrieveTopK}</span>
                     </div>
                     <Slider
-                      value={[config.topK]}
-                      min={1}
-                      max={10}
+                      value={[config.retrieveTopK]}
+                      min={2}
+                      max={20}
                       step={1}
-                      onValueChange={(v) => updateConfig({ topK: v[0] ?? 5 })}
+                      onValueChange={(v) => {
+                        const next = v[0] ?? 10;
+                        updateConfig({
+                          retrieveTopK: next,
+                          // 不变式：引用资料条数不得超过候选池
+                          rerankTopN: Math.min(config.rerankTopN, next),
+                        });
+                      }}
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -579,6 +588,45 @@ export default function Home() {
                       }
                     />
                   </div>
+                  <div className="space-y-3 border-t pt-3">
+                  <p className="font-serif text-xs font-semibold">模型</p>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>生成温度</span>
+                      <span className="font-mono">
+                        {config.temperature.toFixed(1)}
+                      </span>
+                    </div>
+                    <Slider
+                      value={[config.temperature]}
+                      min={0}
+                      max={1}
+                      step={0.1}
+                      onValueChange={(v) =>
+                        updateConfig({ temperature: v[0] ?? 0.7 })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>引用资料条数</span>
+                      <span className="font-mono">{config.rerankTopN}</span>
+                    </div>
+                    <Slider
+                      value={[config.rerankTopN]}
+                      min={1}
+                      max={10}
+                      step={1}
+                      onValueChange={(v) => {
+                        const next = v[0] ?? 5;
+                        updateConfig({
+                          rerankTopN: next,
+                          // 不变式：引用资料条数不得超过候选池
+                          retrieveTopK: Math.max(config.retrieveTopK, next),
+                        });
+                      }}
+                    />
+                  </div>
                   <div className="flex items-center justify-between text-xs">
                     <span>引用与幻觉校验</span>
                     <Switch
@@ -588,49 +636,50 @@ export default function Home() {
                       }
                     />
                   </div>
-                  <div className="space-y-3 border-t pt-3">
-                    <p className="font-serif text-xs font-semibold">切块</p>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <span>块最大字符</span>
-                        <span className="font-mono">{chunking.maxChars}</span>
-                      </div>
-                      <Slider
-                        value={[chunking.maxChars]}
-                        min={200}
-                        max={2000}
-                        step={50}
-                        onValueChange={(v) =>
-                          updateConfig({
-                            chunking: {
-                              ...config.chunking,
-                              maxChars: v[0] ?? 600,
-                            },
-                          })
-                        }
-                      />
+                </div>
+                <div className="space-y-3 border-t pt-3">
+                  <p className="font-serif text-xs font-semibold">切块</p>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>块最大字符</span>
+                      <span className="font-mono">{chunking.maxChars}</span>
                     </div>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <span>相邻重叠</span>
-                        <span className="font-mono">{chunking.overlap}</span>
-                      </div>
-                      <Slider
-                        value={[chunking.overlap]}
-                        min={0}
-                        max={200}
-                        step={10}
-                        onValueChange={(v) =>
-                          updateConfig({
-                            chunking: {
-                              ...config.chunking,
-                              overlap: v[0] ?? 50,
-                            },
-                          })
-                        }
-                      />
-                    </div>
+                    <Slider
+                      value={[chunking.maxChars]}
+                      min={200}
+                      max={2000}
+                      step={50}
+                      onValueChange={(v) =>
+                        updateConfig({
+                          chunking: {
+                            ...config.chunking,
+                            maxChars: v[0] ?? 600,
+                          },
+                        })
+                      }
+                    />
                   </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>相邻重叠</span>
+                      <span className="font-mono">{chunking.overlap}</span>
+                    </div>
+                    <Slider
+                      value={[chunking.overlap]}
+                      min={0}
+                      max={200}
+                      step={10}
+                      onValueChange={(v) =>
+                        updateConfig({
+                          chunking: {
+                            ...config.chunking,
+                            overlap: v[0] ?? 50,
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                </div>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">

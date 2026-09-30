@@ -22,8 +22,6 @@ import type {
 
 const INTENT_LABELS: Record<IntentLabel, string> = {
   FAQ: '知识问答',
-  SEARCH: '资料检索',
-  CLARIFY: '需要澄清',
   OUT_OF_SCOPE: '超出范围',
 };
 
@@ -164,6 +162,14 @@ export function TracePanel({
                 >
                   {trace.intent ? INTENT_LABELS[trace.intent] : '—'}
                 </Badge>
+                {trace.intentDetail?.clarify && (
+                  <p className="mt-1.5 text-[11px] text-accent">
+                    检索置信不足（最高分{' '}
+                    {trace.intentDetail.top1Score?.toFixed(4)} &lt; 阈值{' '}
+                    {trace.intentDetail.threshold?.toFixed(2)}）→ 澄清分支：
+                    跳过 BM25 / 重排 / 校验，生成转为澄清
+                  </p>
+                )}
                 {trace.intentDetail?.finalBy && (
                   <p className="mt-1 font-mono text-[10px] text-muted-foreground">
                     最终：{FINAL_BY_LABELS[trace.intentDetail.finalBy] ?? trace.intentDetail.finalBy}
@@ -180,6 +186,12 @@ export function TracePanel({
               >
                 {retrieval ? (
                   <div className="space-y-2">
+                    {retrieval.top1Score != null && retrieval.threshold != null && (
+                      <p className="font-mono text-[10px] text-muted-foreground">
+                        top-1 余弦 {retrieval.top1Score.toFixed(4)} ≥ 阈值{' '}
+                        {retrieval.threshold.toFixed(2)} → 进入混合检索
+                      </p>
+                    )}
                     <div>
                       <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
                         BM25

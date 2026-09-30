@@ -47,6 +47,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "rerankTopN": 5,
     "bm25Weight": 0.4,
     "vectorWeight": 0.6,
+    # CLARIFY 分支判定：最高向量余弦分数低于该阈值 → 不走 BM25/rerank，转澄清
+    "clarifyThreshold": 0.72,
     "enableValidation": True,
     "chunking": dict(DEFAULT_CHUNKING),
 }

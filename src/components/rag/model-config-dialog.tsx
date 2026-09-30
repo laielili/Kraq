@@ -20,7 +20,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Slider } from '@/components/ui/slider';
 import {
   Select,
   SelectContent,
@@ -685,76 +684,7 @@ export function ModelConfigDialog({
           </p>
         </section>
 
-        {/* 检索参数区 */}
-        <section className="space-y-2">
-          <p className="font-serif text-xs font-semibold">检索参数</p>
-          {(
-            [
-              {
-                key: 'retrieveTopK' as const,
-                label: '召回候选数',
-                hint: 'BM25 / 向量各取前 K（recall_k）',
-                min: 2,
-                max: 20,
-                step: 1,
-              },
-              {
-                key: 'rerankTopN' as const,
-                label: '重排保留数',
-                hint: '重排后进入生成的条数（top_n）',
-                min: 1,
-                max: 10,
-                step: 1,
-              },
-            ]
-          ).map((p) => {
-            const value = config[p.key];
-            return (
-              <div
-                key={p.key}
-                className="flex items-center gap-2 rounded-md border bg-card px-2.5 py-1.5"
-              >
-                <span className="w-16 shrink-0 text-xs font-medium">
-                  {p.label}
-                </span>
-                <Slider
-                  value={[value]}
-                  min={p.min}
-                  max={p.max}
-                  step={p.step}
-                  onValueChange={(v) => {
-                    const next = v[0] ?? value;
-                    // 不变式：重排保留数不得超过候选池
-                    const patch: Partial<RagConfig> = { [p.key]: next };
-                    if (
-                      p.key === 'retrieveTopK' &&
-                      config.rerankTopN > next
-                    ) {
-                      patch.rerankTopN = next;
-                    }
-                    if (
-                      p.key === 'rerankTopN' &&
-                      next > config.retrieveTopK
-                    ) {
-                      patch.retrieveTopK = next;
-                    }
-                    onSave(patch);
-                  }}
-                  className="h-4 flex-1"
-                />
-                <span className="w-7 shrink-0 text-right font-mono text-xs">
-                  {value}
-                </span>
-                <span className="hidden w-32 shrink-0 text-right text-[10px] leading-3 text-muted-foreground sm:block">
-                  {p.hint}
-                </span>
-              </div>
-            );
-          })}
-          <p className="text-[11px] text-muted-foreground">
-            召回候选 ≥ 重排保留；调整立即生效，无需重建知识库。
-          </p>
-        </section>
+        {/* 检索参数已移至右上角「检索与生成参数」弹窗（检索组），此处不再重复 */}
 
         <div className="flex justify-end">
           <Button

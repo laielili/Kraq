@@ -60,6 +60,7 @@ def _clamp_counter_value(cfg: dict) -> dict:
         cfg["rerankTopN"] = cfg["retrieveTopK"]
     cfg["bm25Weight"] = clamp(cfg.get("bm25Weight"), 0.0, 1.0, 0.4)
     cfg["vectorWeight"] = clamp(cfg.get("vectorWeight"), 0.0, 1.0, 0.6)
+    cfg["clarifyThreshold"] = clamp(cfg.get("clarifyThreshold"), 0.0, 1.0, 0.72)
     if not isinstance(cfg.get("enableValidation"), bool):
         cfg["enableValidation"] = True
     chunking = cfg.get("chunking")
@@ -191,6 +192,7 @@ def _migrate_config(raw: Mapping[str, object]) -> dict:
         "rerankTopN": DEFAULT_CONFIG["rerankTopN"],
         "bm25Weight": DEFAULT_CONFIG["bm25Weight"],
         "vectorWeight": DEFAULT_CONFIG["vectorWeight"],
+        "clarifyThreshold": DEFAULT_CONFIG["clarifyThreshold"],
         "enableValidation": DEFAULT_CONFIG["enableValidation"],
         "chunking": dict(DEFAULT_CHUNKING),
     }
@@ -206,6 +208,7 @@ def _migrate_config(raw: Mapping[str, object]) -> dict:
         "rerankTopN",
         "bm25Weight",
         "vectorWeight",
+        "clarifyThreshold",
         "enableValidation",
     ):
         if key in raw and raw[key] is not None:
@@ -279,6 +282,7 @@ def update_config(patch: Mapping[str, object]) -> dict:
         "rerankTopN",
         "bm25Weight",
         "vectorWeight",
+        "clarifyThreshold",
         "enableValidation",
     ):
         if key in patch and patch[key] is not None:

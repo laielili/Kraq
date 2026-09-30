@@ -1,4 +1,4 @@
-export type IntentLabel = 'FAQ' | 'SEARCH' | 'CLARIFY' | 'OUT_OF_SCOPE';
+export type IntentLabel = 'FAQ' | 'OUT_OF_SCOPE';
 
 export interface KbDoc {
   id: string;
@@ -27,6 +27,9 @@ export interface RerankedDoc extends ScoredDoc {
 
 export interface RetrievalTrace {
   vectorAvailable: boolean;
+  /** FAQ 主链路：top-1 向量余弦分与其阈值（CLARIFY gate 依据） */
+  top1Score?: number;
+  threshold?: number;
   bm25: ScoredDoc[];
   vector: ScoredDoc[];
   fused: ScoredDoc[];
@@ -57,6 +60,10 @@ export interface IntentStageDetail {
   intent: IntentLabel;
   /** 最终标签由谁给出：llm / rule */
   finalBy?: 'llm' | 'rule';
+  /** CLARIFY 分支：top-1 向量余弦分低于阈值，触发澄清式生成 */
+  clarify?: boolean;
+  top1Score?: number;
+  threshold?: number;
 }
 
 export interface ChunkingCfg {
@@ -76,6 +83,8 @@ export interface RagConfig {
   rerankTopN: number;
   bm25Weight: number;
   vectorWeight: number;
+  /** CLARIFY 分支：top-1 向量余弦分数低于该阈值 → 澄清而非作答 */
+  clarifyThreshold: number;
   enableValidation: boolean;
   chunking: ChunkingCfg;
 }
