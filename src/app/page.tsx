@@ -36,6 +36,8 @@ import { TracePanel } from '@/components/rag/trace-panel';
 import type {
   AskEvent,
   KbDocMeta,
+  KbEmbeddingCfg,
+  KbSettings,
   RagConfig,
   TraceState,
 } from '@/lib/rag/types';
@@ -44,7 +46,6 @@ const DEFAULT_CONFIG: RagConfig = {
   endpoints: [],
   stages: {
     intent: { endpointId: null, model: '' },
-    embedding: { endpointId: null, model: '' },
     rerank: { endpointId: null, model: '' },
     generate: { endpointId: null, model: '' },
     validate: { endpointId: null, model: '' },
@@ -57,11 +58,12 @@ const DEFAULT_CONFIG: RagConfig = {
   vectorWeight: 0.6,
   clarifyThreshold: 0.72,
   enableValidation: true,
-  chunking: { maxChars: 600, overlap: 50 },
 };
 
 export default function Home() {
   const [config, setConfig] = useState<RagConfig | null>(null);
+  // 当前库的 per-KB 嵌入选型（配置模型弹窗只读展示用，随 refreshKb 同步）
+  const [kbEmbedding, setKbEmbedding] = useState<KbEmbeddingCfg | null>(null);
   const [docs, setDocs] = useState<KbDocMeta[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [trace, setTrace] = useState<TraceState | null>(null);
@@ -110,6 +112,23 @@ export default function Home() {
       setDocs(data.docs ?? []);
     } catch {
       setDocs([]);
+    }
+    // 同时刷新 per-KB 嵌入选型（配置模型弹窗的只读向量化行使用）
+    try {
+      const res = await fetch(
+        `/api/kbs/${encodeURIComponent(kbId)}/settings`,
+      );
+      if (res.ok) {
+        const data = (await res.json()) as Partial<KbSettings>;
+        setKbEmbedding({
+          endpointId: data.embedding?.endpointId ?? null,
+          model: data.embedding?.model ?? '',
+        });
+      } else {
+        setKbEmbedding(null);
+      }
+    } catch {
+      setKbEmbedding(null);
     }
   }, []);
 
@@ -184,7 +203,6 @@ export default function Home() {
           ...DEFAULT_CONFIG,
           ...data,
           stages: { ...DEFAULT_CONFIG.stages, ...(data.stages ?? {}) },
-          chunking: { ...DEFAULT_CONFIG.chunking, ...(data.chunking ?? {}) },
         });
       } else {
         setConfig(DEFAULT_CONFIG);
@@ -433,8 +451,6 @@ export default function Home() {
     />
   );
 
-  const chunking = config?.chunking ?? DEFAULT_CONFIG.chunking;
-
   return (
     <div className="flex h-dvh flex-col">
       {putError && (
@@ -637,49 +653,6 @@ export default function Home() {
                     />
                   </div>
                 </div>
-                <div className="space-y-3 border-t pt-3">
-                  <p className="font-serif text-xs font-semibold">切块</p>
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span>块最大字符</span>
-                      <span className="font-mono">{chunking.maxChars}</span>
-                    </div>
-                    <Slider
-                      value={[chunking.maxChars]}
-                      min={200}
-                      max={2000}
-                      step={50}
-                      onValueChange={(v) =>
-                        updateConfig({
-                          chunking: {
-                            ...config.chunking,
-                            maxChars: v[0] ?? 600,
-                          },
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span>相邻重叠</span>
-                      <span className="font-mono">{chunking.overlap}</span>
-                    </div>
-                    <Slider
-                      value={[chunking.overlap]}
-                      min={0}
-                      max={200}
-                      step={10}
-                      onValueChange={(v) =>
-                        updateConfig({
-                          chunking: {
-                            ...config.chunking,
-                            overlap: v[0] ?? 50,
-                          },
-                        })
-                      }
-                    />
-                  </div>
-                </div>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -736,6 +709,7 @@ export default function Home() {
           onOpenChange={setConfigOpen}
           config={config}
           onSave={updateConfig}
+          kbEmbedding={kbEmbedding}
           promptSlot={
             <PromptConfigDialog
               open={promptOpen}
@@ -750,6 +724,7 @@ export default function Home() {
         onOpenChange={setKbSwitcherOpen}
         currentKbId={currentKbId}
         kbs={kbs}
+        endpoints={config?.endpoints ?? []}
         loading={kbsLoading}
         actionPending={kbActionPending}
         onSelect={(kbId) => {
@@ -778,13 +753,13 @@ export default function Home() {
             setKbActionPending(false);
           }
         }}
-        onCreate={async (name) => {
+        onCreate={async (name, settings) => {
           setKbActionPending(true);
           try {
             const res = await fetch('/api/kbs', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name }),
+              body: JSON.stringify({ name, ...settings }),
             });
             const data = (await res.json().catch(() => ({}))) as { error?: string; kbId?: string };
             if (!res.ok || data.error) {
@@ -821,6 +796,42 @@ export default function Home() {
           }
         }}
         onCurrentDeleted={() => switchKb('default')}
+        onSaveSettings={async (kbId, patch) => {
+          setKbActionPending(true);
+          try {
+            const res = await fetch(
+              `/api/kbs/${encodeURIComponent(kbId)}/settings`,
+              {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(patch),
+              },
+            );
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            if (!res.ok || data.error) {
+              throw new Error(data.error ?? `保存失败（HTTP ${res.status}）`);
+            }
+          } finally {
+            setKbActionPending(false);
+          }
+        }}
+        onReembed={async (kbId) => {
+          setKbActionPending(true);
+          try {
+            const res = await fetch(
+              `/api/kbs/${encodeURIComponent(kbId)}/reembed`,
+              { method: 'POST' },
+            );
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            if (!res.ok || data.error) {
+              throw new Error(data.error ?? `重新嵌入请求失败（HTTP ${res.status}）`);
+            }
+            // 后端强制全量重嵌在后台异步执行；回读档案柜使 embedded 状态刷新
+            await refreshKb(kbId);
+          } finally {
+            setKbActionPending(false);
+          }
+        }}
       />
       {kbError && (
         <div className="fixed bottom-4 left-1/2 z-[60] max-w-sm -translate-x-1/2 rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-accent shadow-sm">

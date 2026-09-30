@@ -30,13 +30,13 @@ DEFAULT_ENDPOINT: Dict[str, Any] = {
 
 DEFAULT_STAGES: Dict[str, Dict[str, Any]] = {
     "intent": {"endpointId": None, "model": ""},
-    "embedding": {"endpointId": None, "model": ""},
     "rerank": {"endpointId": None, "model": ""},
     "generate": {"endpointId": None, "model": ""},
     "validate": {"endpointId": None, "model": ""},
 }
 
-DEFAULT_CHUNKING: Dict[str, Any] = {"maxChars": 600, "overlap": 50}
+# 逐知识库默认（仅用于“重新嵌入/新建校验提示”说明，不作为运行时回退）
+KB_DEFAULT_CHUNKING: Dict[str, Any] = {"maxChars": 600, "overlap": 50}
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "endpoints": [DEFAULT_ENDPOINT],
@@ -50,10 +50,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # CLARIFY 分支判定：最高向量余弦分数低于该阈值 → 不走 BM25/rerank，转澄清
     "clarifyThreshold": 0.72,
     "enableValidation": True,
-    "chunking": dict(DEFAULT_CHUNKING),
 }
 
-STAGE_KEYS = ("intent", "embedding", "rerank", "generate", "validate")
+STAGE_KEYS = ("intent", "rerank", "generate", "validate")
 
 
 def now_iso() -> str:
@@ -129,7 +128,7 @@ __all__ = [
     "DEFAULT_ENDPOINT",
     "DEFAULT_STAGES",
     "STAGE_KEYS",
-    "DEFAULT_CHUNKING",
+    "KB_DEFAULT_CHUNKING",
     "DEFAULT_CONFIG",
     "now_iso",
     "utf8",

@@ -8,6 +8,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Trash2,
@@ -31,7 +32,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils';
+import type { ChunkingCfg, EndpointConfig, KbEmbeddingCfg, KbSettings } from '@/lib/rag/types';
 
 /** GET /api/kbs 返回单项 */
 export interface KbSummary {
@@ -41,6 +52,8 @@ export interface KbSummary {
 }
 
 const DEFAULT_KB_ID = 'default';
+
+const DEFAULT_CHUNKING_LOCAL: ChunkingCfg = { maxChars: 600, overlap: 50 };
 
 export type KbActionPhase =
   | 'rename'
@@ -60,21 +73,33 @@ interface ConfirmTarget {
   name: string;
 }
 
+/** 新建知识库必填的 per-KB 配置（随 POST /api/kbs body 提交） */
+export interface KbCreateSettings {
+  embedding: KbEmbeddingCfg;
+  chunking: ChunkingCfg;
+}
+
 interface KbManagerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentKbId: string;
   kbs: KbSummary[];
+  /** 已配置服务端点（新建/库配置的嵌入端点下拉来源） */
+  endpoints: EndpointConfig[];
   /** 正在拉取 /api/kbs */
   loading: boolean;
-  /** 全局操作错误（已有，如工具栏已渲染 sadd 报错时不再重复渲染） */
+  /** 全局操作错误 */
   actionPending: boolean;
   /** 切库（page 负责写 localStorage + 刷新档案柜） */
   onSelect: (kbId: string) => Promise<void> | void;
-  /** 后端操作：改名 / 新建 / 删除（DELETE 的 shouldDeleteCollection 先由确认框capture到 list 里） */
+  /** 后端操作：改名 / 新建 / 删除 */
   onRename: (oldKbId: string, newName: string) => Promise<void>;
-  onCreate: (name: string) => Promise<void>;
+  onCreate: (name: string, settings: KbCreateSettings) => Promise<void>;
   onDelete: (kbId: string, name: string) => Promise<void>;
+  /** 保存 per-KB 嵌入/切块（page PUT /api/kbs/{kbId}/settings） */
+  onSaveSettings: (kbId: string, patch: Partial<KbSettings>) => Promise<void>;
+  /** 触发该库「重新嵌入」（POST /api/kbs/{kbId}/reembed） */
+  onReembed: (kbId: string) => Promise<void>;
   /** 当前库被删除后 page 需要切回 default 时调用 */
   onCurrentDeleted: () => Promise<void> | void;
 }
@@ -85,27 +110,68 @@ function nameErrorMessage(name: string): string | null {
   return null;
 }
 
+async function fetchKbSettings(kbId: string): Promise<KbSettings | null> {
+  try {
+    const res = await fetch(`/api/kbs/${encodeURIComponent(kbId)}/settings`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as KbSettings;
+    if (!data || typeof data !== 'object') return null;
+    return {
+      embedding: {
+        endpointId: data.embedding?.endpointId ?? null,
+        model: data.embedding?.model ?? '',
+      },
+      chunking: {
+        maxChars: data.chunking?.maxChars ?? 600,
+        overlap: data.chunking?.overlap ?? 50,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function KbManagerDialog({
   open,
   onOpenChange,
   currentKbId,
   kbs,
+  endpoints,
   loading,
   actionPending,
   onSelect,
   onRename,
   onCreate,
   onDelete,
+  onSaveSettings,
+  onReembed,
   onCurrentDeleted,
 }: KbManagerDialogProps) {
   const [settingsFor, setSettingsFor] = useState<SettingsTarget | null>(null);
   const [renameName, setRenameName] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [newKbName, setNewKbName] = useState('');
+  // 新建弹窗的 per-KB 必填配置
+  const [newEmbedding, setNewEmbedding] = useState<KbEmbeddingCfg>({
+    endpointId: null,
+    model: '',
+  });
+  const [newChunking, setNewChunking] = useState<ChunkingCfg>(DEFAULT_CHUNKING_LOCAL);
   const [confirmDelete, setConfirmDelete] = useState<ConfirmTarget | null>(null);
+  const [confirmReembed, setConfirmReembed] = useState<ConfirmTarget | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [reembedPending, setReembedPending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
+  // 库配置面板数据（GET /api/kbs/{kbId}/settings）
+  const [kbSettings, setKbSettings] = useState<KbSettings | null>(null);
+  const [kbSettingsLoading, setKbSettingsLoading] = useState(false);
+  // 逐控件草稿（一段一存）
+  const [endpointDraft, setEndpointDraft] = useState<string | null>(null);
+  const [modelDraft, setModelDraft] = useState('');
+  const [maxCharsDraft, setMaxCharsDraft] = useState(600);
+  const [overlapDraft, setOverlapDraft] = useState(50);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const newInputRef = useRef<HTMLInputElement>(null);
 
@@ -173,9 +239,26 @@ export function KbManagerDialog({
       setLocalError(nameErr);
       return;
     }
+    if (!newEmbedding.endpointId) {
+      setLocalError('请选择向量嵌入端点');
+      return;
+    }
+    if (!newEmbedding.model.trim()) {
+      setLocalError('请填写向量嵌入模型名');
+      return;
+    }
+    if (newChunking.overlap >= newChunking.maxChars) {
+      setLocalError('相邻重叠必须小于块最大字符');
+      return;
+    }
     await runMutation(async () => {
-      await onCreate(name);
+      await onCreate(name, {
+        embedding: newEmbedding,
+        chunking: newChunking,
+      });
       setNewKbName('');
+      setNewEmbedding({ endpointId: null, model: '' });
+      setNewChunking(DEFAULT_CHUNKING_LOCAL);
       setCreateOpen(false);
     }).catch(() => undefined);
   }
@@ -195,6 +278,52 @@ export function KbManagerDialog({
     setSettingsFor({ kbId: kb.kbId, name: kb.name, docCount: kb.docCount });
     setRenameName(kb.name);
     setLocalError(null);
+    setKbSettings(null);
+    setKbSettingsLoading(true);
+    void fetchKbSettings(kb.kbId).then((s) => {
+      setKbSettings(s);
+      setKbSettingsLoading(false);
+      setEndpointDraft(s?.embedding.endpointId ?? null);
+      setModelDraft(s?.embedding.model ?? '');
+      setMaxCharsDraft(s?.chunking.maxChars ?? 600);
+      setOverlapDraft(s?.chunking.overlap ?? 50);
+    });
+  }
+
+  async function savePatch(key: string, patch: Partial<KbSettings>) {
+    if (!settingsFor) return;
+    setSavingKey(key);
+    setLocalError(null);
+    try {
+      await onSaveSettings(settingsFor.kbId, patch);
+      // 保存后回读，让面板显示后端归一后的值
+      const s = await fetchKbSettings(settingsFor.kbId);
+      setKbSettings(s);
+      if (s) {
+        setEndpointDraft(s.embedding.endpointId);
+        setModelDraft(s.embedding.model);
+        setMaxCharsDraft(s.chunking.maxChars);
+        setOverlapDraft(s.chunking.overlap);
+      }
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : '保存失败');
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
+  async function handleReembed() {
+    if (!confirmReembed || reembedPending) return;
+    setReembedPending(true);
+    setLocalError(null);
+    try {
+      await onReembed(confirmReembed.kbId);
+      setConfirmReembed(null);
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : '重新嵌入失败');
+    } finally {
+      setReembedPending(false);
+    }
   }
 
   function closeDialog(openNow: boolean) {
@@ -202,8 +331,11 @@ export function KbManagerDialog({
     if (!openNow) {
       setSettingsFor(null);
       setConfirmDelete(null);
+      setConfirmReembed(null);
       setRenameName('');
       setNewKbName('');
+      setNewEmbedding({ endpointId: null, model: '' });
+      setNewChunking(DEFAULT_CHUNKING_LOCAL);
       setLocalError(null);
     }
   }
@@ -263,6 +395,11 @@ export function KbManagerDialog({
               disabled={loading || actionPending || submitting}
               onClick={() => {
                 setNewKbName('');
+                setNewEmbedding({
+                  endpointId: endpoints[0]?.id ?? null,
+                  model: '',
+                });
+                setNewChunking(DEFAULT_CHUNKING_LOCAL);
                 setCreateOpen(true);
               }}
             >
@@ -383,7 +520,7 @@ export function KbManagerDialog({
         </DialogContent>
       </Dialog>
 
-      {/* 新建知识库弹窗 */}
+      {/* 新建知识库弹窗（库名 + per-KB 必填配置） */}
       <Dialog
         open={createOpen}
         onOpenChange={(v) => {
@@ -393,11 +530,12 @@ export function KbManagerDialog({
           }
         }}
       >
-        <DialogContent className="rounded-lg sm:max-w-sm">
+        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-lg sm:max-w-md">
           <DialogTitle className="font-serif text-base">新建知识库</DialogTitle>
           <DialogDescription className="text-xs">
             新建后档案柜即切换到该抽屉入库；同名的抽屉会被后端拒绝。
           </DialogDescription>
+
           <Input
             ref={newInputRef}
             value={newKbName}
@@ -413,6 +551,83 @@ export function KbManagerDialog({
             maxLength={64}
             autoFocus
           />
+
+          {/* per-KB 必填：向量嵌入端点 + 模型 */}
+          <div className="space-y-2.5 rounded-md border bg-sidebar/30 p-3">
+            <p className="font-serif text-xs font-semibold">向量嵌入（本库专用）</p>
+            <div className="space-y-1">
+              <Label className="text-[10px]">嵌入端点</Label>
+              <Select
+                value={newEmbedding.endpointId ?? undefined}
+                onValueChange={(v) =>
+                  setNewEmbedding((f) => ({ ...f, endpointId: v }))
+                }
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="选择端点" />
+                </SelectTrigger>
+                <SelectContent>
+                  {endpoints.map((ep) => (
+                    <SelectItem key={ep.id} value={ep.id} className="text-xs">
+                      {ep.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {endpoints.length === 0 && (
+                <p className="text-[10px] text-muted-foreground">
+                  尚无端点，请先在「配置模型 → 添加端点」中添加。
+                </p>
+              )}
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px]">嵌入模型名</Label>
+              <Input
+                value={newEmbedding.model}
+                onChange={(e) =>
+                  setNewEmbedding((f) => ({ ...f, model: e.target.value }))
+                }
+                placeholder="如 nomic-embed-text / bge-m3 / qwen3-embedding"
+                className="h-8 bg-card font-mono text-xs"
+              />
+            </div>
+          </div>
+
+          {/* per-KB 必填：切块 */}
+          <div className="space-y-2.5 rounded-md border bg-sidebar/30 p-3">
+            <p className="font-serif text-xs font-semibold">切块（本库专用）</p>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span>块最大字符</span>
+                <span className="font-mono">{newChunking.maxChars}</span>
+              </div>
+              <Slider
+                value={[newChunking.maxChars]}
+                min={200}
+                max={2000}
+                step={50}
+                onValueChange={(v) =>
+                  setNewChunking((f) => ({ ...f, maxChars: v[0] ?? 600 }))
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span>相邻重叠</span>
+                <span className="font-mono">{newChunking.overlap}</span>
+              </div>
+              <Slider
+                value={[newChunking.overlap]}
+                min={0}
+                max={200}
+                step={10}
+                onValueChange={(v) =>
+                  setNewChunking((f) => ({ ...f, overlap: v[0] ?? 50 }))
+                }
+              />
+            </div>
+          </div>
+
           {localError && (
             <p className="rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-[11px] text-accent">
               {localError}
@@ -431,7 +646,7 @@ export function KbManagerDialog({
             <Button
               size="sm"
               className="h-8 gap-1.5 text-xs"
-              disabled={submitting || !newKbName.trim()}
+              disabled={submitting || !newKbName.trim() || endpoints.length === 0}
               onClick={() => void handleCreate()}
             >
               {submitting ? (
@@ -445,7 +660,7 @@ export function KbManagerDialog({
         </DialogContent>
       </Dialog>
 
-      {/* 配置小面板：改名 + 删除（不含向量存储方式） */}
+      {/* 库配置小面板：改名 + 向量嵌入 + 切块 + 重新嵌入 + 删除 */}
       <Dialog
         open={settingsFor != null}
         onOpenChange={(v) => {
@@ -455,7 +670,7 @@ export function KbManagerDialog({
           }
         }}
       >
-        <DialogContent className="w-80 max-w-[calc(100vw-2rem)] gap-3 p-4 sm:max-w-sm">
+        <DialogContent className="max-h-[85vh] w-96 max-w-[calc(100vw-2rem)] gap-3 overflow-y-auto p-4 sm:max-w-md">
           <DialogTitle className="font-serif text-sm">
             配置 · {settingsFor?.name ?? ''}
           </DialogTitle>
@@ -495,6 +710,225 @@ export function KbManagerDialog({
                 保存
               </Button>
             </div>
+          </div>
+
+          {/* 向量嵌入（per-KB） */}
+          <div className="space-y-2 border-t pt-2.5">
+            <p className="font-serif text-xs font-semibold">向量嵌入</p>
+            {kbSettingsLoading || !kbSettings ? (
+              <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" />
+                配置读取中…
+              </div>
+            ) : (
+              <>
+                {/* 端点一段 */}
+                <div className="space-y-1">
+                  <Label className="text-[10px]">嵌入端点</Label>
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={endpointDraft ?? undefined}
+                      onValueChange={(v) => setEndpointDraft(v)}
+                    >
+                      <SelectTrigger className="h-8 min-w-0 flex-1 text-xs">
+                        <SelectValue placeholder="选择端点" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {endpoints.map((ep) => (
+                          <SelectItem key={ep.id} value={ep.id} className="text-xs">
+                            {ep.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 shrink-0 gap-1 text-xs"
+                      disabled={
+                        savingKey != null ||
+                        !endpointDraft ||
+                        endpointDraft === kbSettings.embedding.endpointId
+                      }
+                      onClick={() =>
+                        void savePatch('endpoint', {
+                          embedding: {
+                            endpointId: endpointDraft,
+                            model: kbSettings.embedding.model,
+                          },
+                        })
+                      }
+                    >
+                      {savingKey === 'endpoint' ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        <Pencil className="size-3" />
+                      )}
+                      保存
+                    </Button>
+                  </div>
+                </div>
+                {/* 模型一段 */}
+                <div className="space-y-1">
+                  <Label className="text-[10px]">嵌入模型名</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={modelDraft}
+                      onChange={(e) => setModelDraft(e.target.value)}
+                      placeholder="如 nomic-embed-text / bge-m3"
+                      className="h-8 min-w-0 flex-1 bg-card font-mono text-xs"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 shrink-0 gap-1 text-xs"
+                      disabled={
+                        savingKey != null ||
+                        !modelDraft.trim() ||
+                        modelDraft.trim() === kbSettings.embedding.model.trim()
+                      }
+                      onClick={() =>
+                        void savePatch('model', {
+                          embedding: {
+                            endpointId: kbSettings.embedding.endpointId,
+                            model: modelDraft.trim(),
+                          },
+                        })
+                      }
+                    >
+                      {savingKey === 'model' ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        <Pencil className="size-3" />
+                      )}
+                      保存
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    修改嵌入端点/模型后，本库向量将按新模型于下次提问或启动时重算。
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* 切块（per-KB） */}
+          <div className="space-y-2 border-t pt-2.5">
+            <p className="font-serif text-xs font-semibold">切块</p>
+            {kbSettingsLoading || !kbSettings ? (
+              <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" />
+                配置读取中…
+              </div>
+            ) : (
+              <>
+                {/* 块最大字符一段 */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span>块最大字符</span>
+                    <span className="font-mono">{maxCharsDraft}</span>
+                  </div>
+                  <Slider
+                    value={[maxCharsDraft]}
+                    min={200}
+                    max={2000}
+                    step={50}
+                    onValueChange={(v) => setMaxCharsDraft(v[0] ?? 600)}
+                  />
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 text-xs"
+                      disabled={
+                        savingKey != null ||
+                        maxCharsDraft === kbSettings.chunking.maxChars
+                      }
+                      onClick={() =>
+                        void savePatch('maxChars', {
+                          chunking: {
+                            maxChars: maxCharsDraft,
+                            overlap: kbSettings.chunking.overlap,
+                          },
+                        })
+                      }
+                    >
+                      {savingKey === 'maxChars' ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        <Pencil className="size-3" />
+                      )}
+                      保存
+                    </Button>
+                  </div>
+                </div>
+                {/* 相邻重叠一段 */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span>相邻重叠</span>
+                    <span className="font-mono">{overlapDraft}</span>
+                  </div>
+                  <Slider
+                    value={[overlapDraft]}
+                    min={0}
+                    max={200}
+                    step={10}
+                    onValueChange={(v) => setOverlapDraft(v[0] ?? 50)}
+                  />
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 text-xs"
+                      disabled={
+                        savingKey != null ||
+                        overlapDraft === kbSettings.chunking.overlap
+                      }
+                      onClick={() =>
+                        void savePatch('overlap', {
+                          chunking: {
+                            maxChars: kbSettings.chunking.maxChars,
+                            overlap: overlapDraft,
+                          },
+                        })
+                      }
+                    >
+                      {savingKey === 'overlap' ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        <Pencil className="size-3" />
+                      )}
+                      保存
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    仅对之后上传的新文件生效；已有档案按当时参数切块，不重切。
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* 重新嵌入（红色 / 二次确认） */}
+          <div className="space-y-1.5 border-t pt-2.5">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 w-full gap-1.5 border-destructive/40 text-xs text-destructive hover:bg-destructive/10"
+              disabled={actionPending || submitting || reembedPending}
+              onClick={() => {
+                setConfirmReembed({
+                  kbId: settingsFor?.kbId ?? '',
+                  name: settingsFor?.name ?? '',
+                });
+              }}
+            >
+              <RefreshCw className="size-3.5" />
+              重新嵌入
+            </Button>
+            <p className="text-[10px] text-muted-foreground">
+              对本库全部档案强制重新计算向量；不重切块。
+            </p>
           </div>
 
           <div className="space-y-1.5 border-t pt-2.5">
@@ -568,6 +1002,44 @@ export function KbManagerDialog({
                 <Loader2 className="mr-1 inline size-3.5 animate-spin" />
               )}
               确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 重新嵌入二次确认 */}
+      <AlertDialog
+        open={confirmReembed != null}
+        onOpenChange={(v) => {
+          if (!v) setConfirmReembed(null);
+        }}
+      >
+        <AlertDialogContent className="sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 font-serif text-base">
+              <AlertTriangle className="size-4 text-destructive" />
+              确认重新嵌入「{confirmReembed?.name}」？
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              将对本库{' '}
+              {kbs.find((k) => k.kbId === confirmReembed?.kbId)?.docCount ?? 0}{' '}
+              份档案全部强制重新计算向量（使用本库配置的嵌入端点/模型），耗时取决于档案规模。切块不做变更。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="h-8 text-xs">取消</AlertDialogCancel>
+            <AlertDialogAction
+              className="h-8 bg-destructive text-xs text-destructive-foreground hover:bg-destructive/90"
+              disabled={reembedPending}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleReembed();
+              }}
+            >
+              {reembedPending && (
+                <Loader2 className="mr-1 inline size-3.5 animate-spin" />
+              )}
+              确认重新嵌入
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from .common import (
     CONFIG_FILE,
-    DEFAULT_CHUNKING,
+    KB_DEFAULT_CHUNKING,
     DEFAULT_CONFIG,
     DEFAULT_ENDPOINT,
     DEFAULT_STAGES,
@@ -63,20 +63,8 @@ def _clamp_counter_value(cfg: dict) -> dict:
     cfg["clarifyThreshold"] = clamp(cfg.get("clarifyThreshold"), 0.0, 1.0, 0.72)
     if not isinstance(cfg.get("enableValidation"), bool):
         cfg["enableValidation"] = True
-    chunking = cfg.get("chunking")
-    if not isinstance(chunking, dict):
-        chunking = {}
-    try:
-        chunking["maxChars"] = int(chunking.get("maxChars") or 600)
-    except (TypeError, ValueError):
-        chunking["maxChars"] = 600
-    try:
-        chunking["overlap"] = int(chunking.get("overlap") or 50)
-    except (TypeError, ValueError):
-        chunking["overlap"] = 50
-    if chunking["overlap"] >= chunking["maxChars"]:
-        chunking["overlap"] = max(0, chunking["maxChars"] - 50)
-    cfg["chunking"] = chunking
+    # embedding/chunking 已下沉到 per-KB（kb.json）；config 中的残留键在下次写回时剥离
+    cfg.pop("chunking", None)
     return cfg
 
 
@@ -194,12 +182,12 @@ def _migrate_config(raw: Mapping[str, object]) -> dict:
         "vectorWeight": DEFAULT_CONFIG["vectorWeight"],
         "clarifyThreshold": DEFAULT_CONFIG["clarifyThreshold"],
         "enableValidation": DEFAULT_CONFIG["enableValidation"],
-        "chunking": dict(DEFAULT_CHUNKING),
     }
     if isinstance(raw.get("endpoints"), list):
         eps, _ = _deep_merge_endpoint_lists(None, raw["endpoints"])
         cfg["endpoints"] = eps
     if isinstance(raw.get("stages"), Mapping):
+        # 旧 stages 里可能残留 embedding 项：跳过（按 STAGE_KEYS 白名单取）
         cfg["stages"] = _normalize_stages(None, raw["stages"])
     for key in (
         "temperature",
@@ -213,12 +201,6 @@ def _migrate_config(raw: Mapping[str, object]) -> dict:
     ):
         if key in raw and raw[key] is not None:
             cfg[key] = raw[key]
-    chunking = raw.get("chunking")
-    if isinstance(chunking, Mapping):
-        cfg["chunking"] = {
-            "maxChars": int(chunking.get("maxChars") or DEFAULT_CHUNKING["maxChars"]),
-            "overlap": int(chunking.get("overlap") or DEFAULT_CHUNKING["overlap"]),
-        }
     # Preserve any legacy keys (e.g. "model") — brief says: 旧字段并入
     for key, value in raw.items():
         if key not in cfg:
@@ -260,6 +242,7 @@ def public_config() -> dict:
         ep_out["hasKey"] = bool(str(ep.get("apiKey") or "").strip())
         ep_out.pop("apiKey", None)
         endpoints.append(ep_out)
+    out["endpoints"] = endpoints
     return out
 
 
@@ -300,12 +283,8 @@ def update_config(patch: Mapping[str, object]) -> dict:
         next_cfg["stages"] = {
             name: dict(value) for name, value in current["stages"].items()
         }
-    if isinstance(patch.get("chunking"), Mapping):
-        chunking = patch["chunking"]
-        next_cfg["chunking"] = {
-            "maxChars": int(chunking.get("maxChars") or DEFAULT_CHUNKING["maxChars"]),
-            "overlap": int(chunking.get("overlap") or DEFAULT_CHUNKING["overlap"]),
-        }
+    # embedding/chunking 不再是全局字段：显式上传即忽略（chunking 由 _clamp 剥离，
+    # stages 的 embedding 项由 _normalize_stages 的 STAGE_KEYS 白名单丢弃）
 
     # Plaintext -> .env + env: reference. A key present-but-"" clears the
     # reference (endpoint without auth); null/missing kept the old reference
@@ -361,6 +340,47 @@ def _norm_system_prompt(value: object) -> Optional[str]:
         return None
     text = value.strip()
     return text[:_SYSTEM_PROMPT_MAX_CHARS] or None
+
+
+# ---------------------------------------------------------------------------
+# per-KB embedding + chunking（向量嵌入模型与切块参数下沉到知识库维度）
+# ---------------------------------------------------------------------------
+def _norm_kb_chunking(value: object) -> dict:
+    """chunking {maxChars, overlap}; 重叠 >= 块长时钳制到 maxChars-50（与旧全局规则一致）。"""
+    raw = value if isinstance(value, Mapping) else {}
+    try:
+        max_chars = int(raw.get("maxChars") or KB_DEFAULT_CHUNKING["maxChars"])
+    except (TypeError, ValueError):
+        max_chars = int(KB_DEFAULT_CHUNKING["maxChars"])
+    try:
+        overlap = int(raw.get("overlap") or KB_DEFAULT_CHUNKING["overlap"])
+    except (TypeError, ValueError):
+        overlap = int(KB_DEFAULT_CHUNKING["overlap"])
+    max_chars = max(200, min(2000, max_chars))
+    overlap = max(0, min(200, overlap))
+    if overlap >= max_chars:
+        overlap = max(0, max_chars - 50)
+    return {"maxChars": max_chars, "overlap": overlap}
+
+
+def _norm_kb_embedding(value: object) -> dict:
+    """嵌入模型选型 {endpointId, model}；model 为空 = 未配置（该库不可向量化）。"""
+    raw = value if isinstance(value, Mapping) else {}
+    return {
+        "endpointId": str(raw.get("endpointId") or "") or None,
+        "model": str(raw.get("model") or "").strip(),
+    }
+
+
+def get_kb_settings(kb_id: str) -> dict:
+    """本库生效的 per-KB 配置：{embedding, chunking}。库不存在抛 KeyError。"""
+    kb = get_kb(kb_id)
+    if kb is None:
+        raise KeyError(f"知识库不存在：{kb_id}")
+    return {
+        "embedding": kb.get("embedding") or {"endpointId": None, "model": ""},
+        "chunking": kb.get("chunking") or dict(KB_DEFAULT_CHUNKING),
+    }
 
 
 def default_system_prompt() -> str:
@@ -486,8 +506,41 @@ def new_doc_id() -> str:
     return str(uuid.uuid4())
 
 
+def _kb_entry(kb_id: str, name: str, docs: list, embedding: object = None, chunking: object = None) -> dict:
+    """Standard kb entry shape with per-KB embedding/chunking fields."""
+    return {
+        "kbId": kb_id,
+        "name": name,
+        "docs": docs,
+        "embedding": _norm_kb_embedding(embedding),
+        "chunking": _norm_kb_chunking(chunking),
+    }
+
+
+def _legacy_global_settings() -> Tuple[dict, dict]:
+    """Snapshot of the legacy global embedding/chunking from config.json (read
+    only, no normalization side effects) — used to seed pre-migration kb entries."""
+    try:
+        raw = _load_config_raw()
+    except Exception:
+        raw = {}
+    stages = raw.get("stages") if isinstance(raw.get("stages"), Mapping) else {}
+    emb_raw = stages.get("embedding") if isinstance(stages, Mapping) else None
+    embedding = {"endpointId": None, "model": ""}
+    if isinstance(emb_raw, Mapping):
+        embedding = {
+            "endpointId": str(emb_raw.get("endpointId") or "") or None,
+            "model": str(emb_raw.get("model") or "").strip(),
+        }
+    chunking = raw.get("chunking")
+    return embedding, _norm_kb_chunking(chunking)
+
+
 def load_or_seed_kbs() -> List[dict]:
-    """Read kb.json into [{kbId, name, docs}]. Legacy {docs:[...]} → default KB."""
+    """Read kb.json into [{kbId, name, docs, embedding, chunking}].
+    Legacy {docs:[...]} → default KB. A kb entry missing embedding/chunking
+    (pre-migration file) is seeded from the legacy config snapshot:
+    old global stages.embedding + chunking."""
     try:
         parsed = read_json_file(KB_FILE)
     except Exception:
@@ -505,6 +558,8 @@ def load_or_seed_kbs() -> List[dict]:
                     "kbId": normalize_kb_id(kb.get("kbId")),
                     "name": str(kb.get("name") or ""),
                     "docs": [d for d in (kb.get("docs") or []) if isinstance(d, Mapping)],
+                    "embedding": kb.get("embedding"),
+                    "chunking": kb.get("chunking"),
                 }
             )
     if not kbs:
@@ -513,8 +568,14 @@ def load_or_seed_kbs() -> List[dict]:
             _doc_record(f"seed-{i + 1:02d}", d["title"], d["content"], None, created)
             for i, d in enumerate(SEED_DOCS)
         ]
-        kbs = [{"kbId": DEFAULT_KB_ID, "name": DEFAULT_KB_NAME, "docs": docs}]
+        kbs = [{
+            "kbId": DEFAULT_KB_ID,
+            "name": DEFAULT_KB_NAME,
+            "docs": docs,
+        }]
         atomic_write_json(KB_FILE, {"kbs": kbs})
+    # fallback for pre-migration entries: snapshot of the legacy global config
+    fallback_embedding, fallback_chunking = _legacy_global_settings()
     # sanitize each doc + dedupe/normalize kbIds
     seen: Dict[str, dict] = {}
     out: List[dict] = []
@@ -537,15 +598,19 @@ def load_or_seed_kbs() -> List[dict]:
                     "createdAt": str(d.get("createdAt") or now_iso()),
                 }
             )
+        embedding_raw = kb.get("embedding") if kb.get("embedding") is not None else fallback_embedding
+        chunking_raw = kb.get("chunking") if kb.get("chunking") is not None else fallback_chunking
         entry = {
             "kbId": kb_id,
             "name": str(kb.get("name") or kb_id),
             "docs": docs,
+            "embedding": _norm_kb_embedding(embedding_raw),
+            "chunking": _norm_kb_chunking(chunking_raw),
         }
         seen[kb_id] = entry
         out.append(entry)
     if not out:
-        out = [{"kbId": DEFAULT_KB_ID, "name": DEFAULT_KB_NAME, "docs": []}]
+        out = [_kb_entry(DEFAULT_KB_ID, DEFAULT_KB_NAME, [], fallback_embedding, fallback_chunking)]
     return out
 
 
@@ -572,8 +637,9 @@ def get_docs(kb_id: str = DEFAULT_KB_ID) -> List[dict]:
     return list(kb["docs"])
 
 
-def create_kb(name: str) -> dict:
-    """POST /api/kbs. Caller must hold DATA_FILE_LOCK."""
+def create_kb(name: str, embedding: object = None, chunking: object = None) -> dict:
+    """POST /api/kbs. Caller must hold DATA_FILE_LOCK. embedding/chunking are
+    REQUIRED per-KB settings (main.py validates before calling)."""
     kbs = load_or_seed_kbs()
     name = str(name or "").strip() or DEFAULT_KB_NAME
     # kbId: ascii slug derived from name, unique suffix; UI-facing name is the
@@ -583,7 +649,13 @@ def create_kb(name: str) -> dict:
         candidate = normalize_kb_id(f"{slug[:24]}-{uuid.uuid4().hex[:6]}")
         if candidate not in {kb["kbId"] for kb in kbs}:
             break
-    entry = {"kbId": candidate, "name": name, "docs": []}
+    entry = {
+        "kbId": candidate,
+        "name": name,
+        "docs": [],
+        "embedding": _norm_kb_embedding(embedding),
+        "chunking": _norm_kb_chunking(chunking),
+    }
     kbs.append(entry)
     atomic_write_json(KB_FILE, {"kbs": kbs})
     return entry
@@ -596,6 +668,25 @@ def rename_kb(kb_id: str, name: str) -> Optional[dict]:
     for kb in kbs:
         if kb["kbId"] == want:
             kb["name"] = str(name or "").strip() or kb["name"]
+            atomic_write_json(KB_FILE, {"kbs": kbs})
+            return kb
+    return None
+
+
+def update_kb_settings(kb_id: str, patch: Mapping[str, object]) -> Optional[dict]:
+    """PUT /api/kbs/{kbId} extension: partial update of per-KB embedding/chunking.
+    Only the provided keys change; unknown keys are ignored. Caller must hold
+    DATA_FILE_LOCK. Returns the updated entry or None when the kb is missing."""
+    kbs = load_or_seed_kbs()
+    want = normalize_kb_id(kb_id)
+    for kb in kbs:
+        if kb["kbId"] == want:
+            if isinstance(patch.get("embedding"), Mapping):
+                kb["embedding"] = _norm_kb_embedding(patch["embedding"])
+            if isinstance(patch.get("chunking"), Mapping):
+                kb["chunking"] = _norm_kb_chunking(patch["chunking"])
+            if isinstance(patch.get("name"), str) and str(patch["name"]).strip():
+                kb["name"] = str(patch["name"]).strip()
             atomic_write_json(KB_FILE, {"kbs": kbs})
             return kb
     return None

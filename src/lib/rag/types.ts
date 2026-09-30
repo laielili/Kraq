@@ -16,6 +16,18 @@ export interface KbDocMeta {
   embedded: boolean;
 }
 
+/** per-KB 嵌入选型（向量嵌入模型已下沉到知识库维度） */
+export interface KbEmbeddingCfg {
+  endpointId: string | null;
+  model: string;
+}
+
+/** per-KB 汇总（GET /api/kbs 单项） */
+export interface KbSettings {
+  embedding: KbEmbeddingCfg;
+  chunking: ChunkingCfg;
+}
+
 export interface ScoredDoc {
   id: string;
   score: number;
@@ -73,7 +85,7 @@ export interface ChunkingCfg {
 
 export interface RagConfig {
   endpoints: EndpointConfig[];
-  stages: Record<StageKey, StageCfg>;
+  stages: Record<Exclude<StageKey, 'embedding'>, StageCfg>;
   temperature: number;
   /** 旧检索旋钮，保留兼容；新代码用 retrieveTopK / rerankTopN */
   topK: number;
@@ -86,7 +98,6 @@ export interface RagConfig {
   /** CLARIFY 分支：top-1 向量余弦分数低于该阈值 → 澄清而非作答 */
   clarifyThreshold: number;
   enableValidation: boolean;
-  chunking: ChunkingCfg;
 }
 
 export type RagConfigPatch = Partial<RagConfig>;

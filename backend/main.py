@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from . import chroma_store
 from .chunker import chunk_text
 from .models_client import list_models
-from .pipeline import run_ask, sync_all_background
+from .pipeline import force_reembed_kb, run_ask, sync_all_background
 from .store import (
     DATA_FILE_LOCK,
     DEFAULT_KB_ID,
@@ -30,7 +30,9 @@ from .store import (
     get_agent_system_prompt,
     get_config,
     get_docs,
+    get_kb,
     get_kbs,
+    get_kb_settings,
     migrate_kb_prompts_to_config,
     migrate_plaintext_keys,
     new_doc_id,
@@ -39,6 +41,7 @@ from .store import (
     rename_kb,
     set_agent_system_prompt,
     update_config,
+    update_kb_settings,
 )
 from .common import now_iso
 
@@ -158,16 +161,43 @@ async def models_get():
 
 
 # ---------------------------------------------------------------------------
-# kbs (multi-KB registry)
+# kbs (multi-KB registry; 每 kb 自带 per-KB 嵌入选型 + 切块参数)
 # ---------------------------------------------------------------------------
+def _kb_summary(kb: dict) -> dict:
+    return {"kbId": kb["kbId"], "name": kb["name"], "docCount": len(kb["docs"])}
+
+
+def _validate_kb_embed_patch(cfg: Mapping[str, object], embedding: Mapping[str, object],
+                             chunking: Mapping[str, object]) -> str | None:
+    """per-KB 嵌入/切块校验，返回错误文案或 None。"""
+    ep_id = str(embedding.get("endpointId") or "")
+    model = str(embedding.get("model") or "").strip()
+    if not ep_id:
+        return "必须选择向量嵌入端点"
+    if not model:
+        return "必须填写向量嵌入模型名"
+    if not any(str(ep.get("id")).strip() == ep_id for ep in (cfg.get("endpoints") or []) if isinstance(ep, Mapping)):
+        return "向量嵌入端点不存在，请先在「配置模型」中添加服务端点"
+    try:
+        max_chars = int(chunking.get("maxChars"))  # type: ignore[union-attr]
+        overlap = int(chunking.get("overlap"))  # type: ignore[union-attr]
+    except (TypeError, ValueError):
+        return "切块参数必须是整数"
+    if not (200 <= max_chars <= 2000):
+        return "块最大字符须在 200–2000 之间"
+    if not (0 <= overlap <= 200):
+        return "相邻重叠须在 0–200 之间"
+    if overlap >= max_chars:
+        return "相邻重叠必须小于块最大字符"
+    return None
+
+
 @app.get("/api/kbs")
 async def kbs_list():
     try:
         async with DATA_FILE_LOCK:
             kbs = get_kbs()
-        return JSONResponse(
-            [{"kbId": kb["kbId"], "name": kb["name"], "docCount": len(kb["docs"])} for kb in kbs]
-        )
+        return JSONResponse([_kb_summary(kb) for kb in kbs])
     except Exception as e:
         return _err(500, f"读取知识库列表失败：{e}")
 
@@ -181,12 +211,94 @@ async def kbs_create(request: Request):
     name = str(body.get("name") or "").strip()
     if not name:
         return _err(400, "知识库名称不能为空")
+    embedding = body.get("embedding") if isinstance(body.get("embedding"), Mapping) else {}
+    chunking = body.get("chunking") if isinstance(body.get("chunking"), Mapping) else {}
     try:
         async with DATA_FILE_LOCK:
-            kb = create_kb(name)
-        return JSONResponse({"kbId": kb["kbId"], "name": kb["name"], "docCount": 0})
+            cfg = get_config()
+            err = _validate_kb_embed_patch(cfg, embedding, chunking)
+            if err:
+                return _err(400, err)
+            kb = create_kb(name, embedding, chunking)
+        return JSONResponse({"kbId": kb["kbId"], "name": kb["name"], "docCount": len(kb["docs"])})
     except Exception as e:
         return _err(500, f"新建知识库失败：{e}")
+
+
+@app.get("/api/kbs/{kb_id}/settings")
+async def kb_settings_get(kb_id: str):
+    try:
+        async with DATA_FILE_LOCK:
+            settings = get_kb_settings(kb_id)
+        return JSONResponse(settings)
+    except KeyError as e:
+        return _err(404, str(e))
+    except Exception as e:
+        return _err(500, f"读取知识库配置失败：{e}")
+
+
+@app.put("/api/kbs/{kb_id}/settings")
+async def kb_settings_put(kb_id: str, request: Request):
+    """per-KB 嵌入端点/模型、切块参数的局部更新（改名走 PUT /api/kbs/{kb_id}）。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return _err(400, "请求体不是合法 JSON")
+    if not isinstance(body, Mapping) or (
+        "embedding" not in body and "chunking" not in body
+    ):
+        return _err(400, "至少提供 embedding 或 chunking 之一")
+    embedding = body.get("embedding") if isinstance(body.get("embedding"), Mapping) else {}
+    chunking = body.get("chunking") if isinstance(body.get("chunking"), Mapping) else {}
+    try:
+        async with DATA_FILE_LOCK:
+            kb = get_kb(kb_id)
+            if kb is None:
+                return _err(404, f"知识库不存在：{kb_id}")
+            cfg = get_config()
+            # 部分更新：缺失一侧沿用库内现值（另一侧不需要重填）
+            current = {
+                "embedding": kb.get("embedding") or {},
+                "chunking": kb.get("chunking") or {},
+            }
+            merged_embedding = {**current["embedding"], **embedding}
+            merged_chunking = {**current["chunking"], **chunking}
+            err = _validate_kb_embed_patch(cfg, merged_embedding, merged_chunking)
+            if err:
+                return _err(400, err)
+            # 只传 body 里出现的键，避免缺失一侧时把另一侧重置为空
+            settings_patch: dict = {}
+            if "embedding" in body:
+                settings_patch["embedding"] = embedding
+            if "chunking" in body:
+                settings_patch["chunking"] = chunking
+            updated = update_kb_settings(kb_id, settings_patch)
+        return JSONResponse({
+            "kbId": updated["kbId"],
+            "name": updated["name"],
+            "embedding": updated["embedding"],
+            "chunking": updated["chunking"],
+        })
+    except Exception as e:
+        return _err(500, f"保存知识库配置失败：{e}")
+
+
+@app.post("/api/kbs/{kb_id}/reembed")
+async def kb_reembed(kb_id: str):
+    """「重新嵌入」：强制对本库全部文档重算向量并 upsert。后台执行，立即返回。"""
+    want = normalize_kb_id(kb_id)
+    if not any(kb["kbId"] == want for kb in get_kbs()):
+        return _err(404, f"知识库不存在：{kb_id}")
+
+    async def _run() -> None:
+        try:
+            report = await force_reembed_kb(want)
+            print(f"[reembed] kb={want} 完成：{report}", flush=True)
+        except Exception as e:
+            print(f"[reembed] kb={want} 失败：{e}", flush=True)
+
+    asyncio.create_task(_run())
+    return JSONResponse({"ok": True, "accepted": True, "kbId": want})
 
 
 @app.get("/api/agent/prompt")
@@ -335,7 +447,9 @@ async def kb_upload(request: Request):
     try:
         async with DATA_FILE_LOCK:
             cfg = get_config()
-            chunking = cfg.get("chunking") or {}
+            # per-KB 切块参数：读本库 chunking（不再用全局）
+            settings = get_kb_settings(kb_id)
+            chunking = settings.get("chunking") or {}
             max_chars = int(chunking.get("maxChars") or 600)
             overlap = int(chunking.get("overlap") or 50)
             pieces = chunk_text(content, max_chars, overlap)

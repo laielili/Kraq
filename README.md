@@ -1,6 +1,6 @@
 # DataAgent — 知识库智能问答系统
 
-RAG 全链路的问答工作台：**意图识别 → BM25 + 向量混合检索 → RRF 融合 → 重排序 → 流式生成 → 引用/幻觉校验**。全过程在右侧「流程追溯」面板逐步可视化，回答带 `[n]` 引用编号，悬停可溯源原文。
+RAG 全链路的问答工作台：**二分类意图（FAQ / OUT_OF_SCOPE）→ 向量置信门控 → BM25 + 向量混合检索 → RRF 融合 → 重排序 → 流式生成 → 引用/幻觉校验**。全过程在右侧「流程追溯」面板逐步可视化，FAQ 回答带 `[n]` 引用编号，悬停可溯源原文；检索置信不足自动转「澄清」分支，超范围消息友好转介。
 
 Python FastAPI 承担全部 RAG 逻辑，Next.js 只做界面与流式转发；模型端点可配置、可换（Ollama / 任何 OpenAI 兼容服务 / llama.cpp）。
 
@@ -36,7 +36,7 @@ Python FastAPI 承担全部 RAG 逻辑，Next.js 只做界面与流式转发；�
 ```
 data/（运行时数据，已 gitignore，首次启动自动播种）
 ├── kb.json       {kbs:[{kbId, name, docs:[{id,title,content,embeddingMeta,createdAt}]}]}
-├── config.json   端点 + 五阶段模型映射 + 检索/校验/切块参数
+├── config.json   端点 + 五阶段模型映射 + 检索参数（含澄清阈值）+ 提示词 + 切块
 ├── chroma/       唯一的向量存储（正文永远只存 kb.json，避免双写漂移）
 └── example_docs/ 12 条种子资料的 txt 版（便于手动导入体验）
 ```
@@ -47,11 +47,12 @@ data/（运行时数据，已 gitignore，首次启动自动播种）
 
 | 阶段 | 实现 | 模型不可用/失败时 |
 | --- | --- | --- |
-| 意图识别 | LLM 分类为 FAQ / SEARCH / CLARIFY / OUT_OF_SCOPE | 规则兜底 `classify_intent`；OUT_OF_SCOPE 短路作答 |
-| 检索 | BM25（CJK 单字+二元分词）+ Chroma 向量召回，加权 RRF 融合（k=60） | 向量端点不可达→仅 BM25（trace 标记 `vectorAvailable:false`），绝不阻塞 |
+| 意图识别 | LLM **二分类** FAQ / OUT_OF_SCOPE（SEARCH 并入 FAQ；CLARIFY 不是判定标签，由检索置信触发，见下行）；含义模糊也算 FAQ，交给门控确认 | 规则兜底 `classify_intent`（同一标签集） |
+| 置信门控 | FAQ 先走向量检索：top-1 余弦 ≥ `clarifyThreshold`（默认 0.72）→ 混合检索全链路；低于阈值 → **CLARIFY 分支**：静默跳过 BM25/重排/校验，已召回候选转为「澄清」生成 | 门控仅在向量服务可用时判定；向量不可用则直接走 BM25 全链路（trace 标记 `vectorAvailable:false`），绝不阻塞 |
+| 检索 | BM25（CJK 单字+二元分词）+ Chroma 向量召回，加权 RRF 融合（k=60） | 向量缺席→仅 BM25 |
 | 重排 | 配置了重排模型则调用（如 bge-reranker-v2-m3） | 词重叠启发式重排兜底 |
-| 生成 | 流式输出（`delta` 事件），思考型模型的思考走 `thinking` 事件 | 聊天卡内直接显示失败原因，**不用 mock 内容冒充回答** |
-| 校验 | LLM 校验引用与幻觉，输出 `valid/citations/reason` JSON | 引用规则校验兜底（编号越界/缺失即不通过，可整体开关） |
+| 生成 | 流式输出（`delta`/`thinking` 事件）；系统提示词 = Agent 全局提示词 + 本轮**意图生成目标**：FAQ=引用作答 / CLARIFY=引导澄清不出答案 / OUT_OF_SCOPE=固定拒答头 + LLM 友好转介（不走 RAG、无 sources） | 聊天卡内直接显示失败原因；OOS 生成失败退回固定话术。**不用 mock 内容冒充回答** |
+| 校验 | LLM 校验引用与幻觉，输出 `valid/citations/reason` JSON（仅 FAQ 主链路，CLARIFY/OOS 不校验） | 引用规则校验兜底（编号越界/缺失即不通过，可整体开关） |
 
 诚实降级是设计原则：任何环节失败都明确标注、能兜底就兜底，不伪造结果。
 
@@ -89,13 +90,19 @@ ollama pull qllama/bge-reranker-v2-m3   # 重排（可选）
 
 ## 模型与检索参数配置
 
-全部走 UI（右上角「检索与生成参数」），落盘到 `data/config.json`：
+全部走 UI，落盘到 `data/config.json`，改配置即时生效：
 
-- **端点管理**：任意数量的端点，协议 `ollama` / `openai`（/v1 后缀自动探测）/ `llamacpp`；API Key 只写不回显（接口返回 `hasKey` 标记）。
-- **五阶段映射**：intent / embedding / rerank / generate / validate 各自绑定端点+模型，改配置即时生效。
-- **检索参数**：候选召回数 `retrieveTopK`（默认 10）、重排保留数 `rerankTopN`（默认 5，恒 ≤ 召回数）、BM25/向量权重（默认 0.4/0.6）、温度、校验开关。
-- **切块参数**：文件上传按 markdown 标题/段落感知切块，`chunking.maxChars=600`、`overlap=50`。
-- **Agent 级系统提示词**：归属知识问答 Agent，对所有知识库统一生效；定制存 `config.json` 的 `systemPrompt`（未定制时回落全局默认 `prompts/system_kb_default.md`）。提示词弹窗里保存空内容 = 重置回默认。注意 `[n]` 引用编号是前端渲染与幻觉校验的契约，提示词模板中的相关条目不可删。
+- **「配置模型」弹窗**：
+  - 端点管理：任意数量的端点，协议 `ollama` / `openai`（/v1 后缀自动探测）/ `llamacpp`；API Key 只写不回显（接口返回 `hasKey` 标记）。
+  - 五阶段映射：intent / embedding / rerank / generate / validate 各自绑定端点+模型。
+- **右上角「检索与生成参数」弹窗**（参数分三组）：
+  - **检索组**：澄清置信阈值 `clarifyThreshold`（默认 0.72，CLARIFY 分支判定依据）、召回候选数 `retrieveTopK`（默认 10）、BM25 检索权重（默认 0.4）、向量检索权重（默认 0.6）。
+  - **模型组**：生成温度、引用资料条数 `rerankTopN`（默认 5，恒 ≤ 召回数）、引用与幻觉校验开关。
+  - **切块组**：块最大字符 `maxChars=600`、相邻重叠 `overlap=50`（文件上传按 markdown 标题/段落感知切块）。
+- **提示词**：
+  - **全局系统提示词**（Agent 级，不再下辖于知识库）：提示词弹窗编辑，走 `/api/agent/prompt`，保存空 = 重置回 `prompts/system_kb_default.md`；旧「逐知识库提示词」启动时自动迁移为全局。
+  - **意图生成目标**（Agent 级模板，生成阶段与全局提示词拼接注入）：`goalPromptFaq` / `goalPromptClarify` / `goalPromptOos` 三键手工编辑 config.json 定制，未定制回落 `prompts/goal_*_default.md`，再回落内置文案。
+  - `[n]` 引用编号是前端渲染与幻觉校验的契约，提示词相关条目不可删。
 
 ## 项目结构
 
@@ -116,7 +123,8 @@ src/                     # Next.js 前端
   components/rag/        # chat-panel / kb-panel / trace-panel / citation-text
                          # kb-manager-dialog / model-config-dialog / prompt-config-dialog
   lib/rag/types.ts       # SSE 事件与配置的共享类型（前后端契约钉子）
-prompts/system_kb_default.md  # 生成默认系统提示词（引用契约在此）
+prompts/system_kb_default.md   # Agent 级全局系统提示词默认样本（引用契约在此）
+prompts/goal_*_default.md      # FAQ / CLARIFY / OUT_OF_SCOPE 三条生成目标默认样本
 data/                    # 运行时状态（gitignore）；删掉即完全重置
 ```
 
@@ -128,12 +136,12 @@ data/                    # 运行时状态（gitignore）；删掉即完全重�
 | `GET/PUT /api/config` | 读写端点/阶段映射/参数（PUT 侧有量程钳制） |
 | `GET /api/models` | 并发探测各端点可用模型清单（配置弹窗的数据源+连通性测试） |
 | `GET/POST /api/kbs`、`PUT/DELETE /api/kbs` | 知识库增删改查（default 库不可删；删库连带清 Chroma collection） |
-| `GET/PUT /api/kbs/{kbId}/prompt` | 逐库系统提示词（空 = 回落全局默认） |
+| `GET/PUT /api/agent/prompt` | 知识问答 Agent 的全局系统提示词（空 = 回落全局默认） |
 | `GET/POST/DELETE /api/kb` | 当前库文档列表/添加/删除（均带 `kbId`，缺省回落 `default`） |
 | `POST /api/kb/upload` | 上传 txt/md（≤2M 字符）→ 自动切块入库 |
-| `POST /api/ask` | SSE 问答，`kbId` 可选 |
+| `POST /api/ask` | SSE 问答；`kbId` 可选，`sessionId`（页面会话 ID）供网关稳定命中 prompt 缓存 |
 
-SSE 事件序固定为 `intent → retrieve → rerank → generate → (delta/thinking…) → (validate) → done`，异常发 `{"type":"error"}`。这一帧序是前后端契约（前端 `applyEvent` 依赖它），改动任何一环都不得破坏。
+SSE 帧序（FAQ 主链）固定为 `intent → retrieve → rerank → generate → (delta/thinking…) → (validate) → done`；**CLARIFY / OUT_OF_SCOPE 分支在 intent 后静默短路**，不发 retrieve/rerank/validate 帧（生成文本仍走 `delta/thinking`；OOS 的 `done` 无 sources，CLARIFY 以流结束收尾）。异常发 `{"type":"error"}`。这一帧序是前后端契约（前端 `applyEvent` 依赖它），改动任何一环都不得破坏。
 
 ## 数据与备份
 

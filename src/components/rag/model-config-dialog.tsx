@@ -30,6 +30,7 @@ import {
 import type {
   EndpointConfig,
   EndpointProtocol,
+  KbEmbeddingCfg,
   RagConfig,
   StageKey,
 } from '@/lib/rag/types';
@@ -40,6 +41,8 @@ interface ModelConfigDialogProps {
   config: RagConfig;
   /** page 负责本地合并 + PUT；返回 Promise 时弹窗可等待保存完成（测试连接前） */
   onSave: (patch: Partial<RagConfig>) => void | Promise<void>;
+  /** 当前知识库的 per-KB 嵌入选型（只读展示，与库内一致保证向量不失真） */
+  kbEmbedding?: KbEmbeddingCfg | null;
   /** 提示词配置二级弹窗元素（page 组装好 open/onOpenChange/kbId 后传入） */
   promptSlot?: ReactNode;
   /** 「提示词配置」按钮点击 → 通知 page 打开二级弹窗 */
@@ -51,8 +54,12 @@ interface EndpointFormState {
   name: string;
   protocol: EndpointProtocol;
   baseUrl: string;
+  /** 编辑已存 Key 端点时预热为 HAS_KEY_PLACEHOLDER（仅展示，提交时还原为 null） */
   apiKey: string;
 }
+
+/** 已存 Key 的遮掩显示值：password 输入框里"看起来有东西"，不代表真实明文 */
+const KEY_PLACEHOLDER_DISPLAY = '••••••••••••';
 
 interface TestStatus {
   state: 'idle' | 'testing' | 'ok' | 'fail';
@@ -88,9 +95,8 @@ const DEFAULT_ENDPOINT_FORM: EndpointFormState = {
   apiKey: '',
 };
 
-const STAGES: Array<{ key: StageKey; label: string; hint: string }> = [
+const STAGES: Array<{ key: Exclude<StageKey, 'embedding'>; label: string; hint: string }> = [
   { key: 'intent', label: '意图识别', hint: '如 qwen3:4b / deepseek-chat' },
-  { key: 'embedding', label: '向量化', hint: '如 nomic-embed-text / bge-m3' },
   { key: 'rerank', label: '重排', hint: 'Ollama 不支持；用 llama.cpp /v1/rerank 服务' },
   { key: 'generate', label: '生成', hint: '如 qwen3:8b / deepseek-chat' },
   { key: 'validate', label: '校验', hint: '如 qwen3:8b / deepseek-chat' },
@@ -107,6 +113,7 @@ export function ModelConfigDialog({
   onOpenChange,
   config,
   onSave,
+  kbEmbedding,
   promptSlot,
   onOpenPrompt,
 }: ModelConfigDialogProps) {
@@ -166,7 +173,8 @@ export function ModelConfigDialog({
         name: ep.name,
         protocol: ep.protocol,
         baseUrl: ep.baseUrl,
-        apiKey: '',
+        // 已存 Key 用遮掩值预热输入框（password 圆点遮罩）；改动后即视为新明文
+        apiKey: ep.hasKey ? KEY_PLACEHOLDER_DISPLAY : '',
       });
       setTestStatus(IDLE_STATUS);
       setFormOpen(true);
@@ -235,7 +243,10 @@ export function ModelConfigDialog({
     async (thenTest: boolean) => {
       const editing = form.editingId;
       const id = editing ?? uid();
-      const keyFilled = Boolean(form.apiKey.trim());
+      // 遮掩值 = 用户未改动 Key（仅展示）；其余非空视为用户输入的新明文
+      const userTypedNewKey =
+        form.apiKey.trim().length > 0 && form.apiKey !== KEY_PLACEHOLDER_DISPLAY;
+      const keyFilled = userTypedNewKey;
       const old = editing
         ? endpoints.find((e) => e.id === editing)
         : undefined;
@@ -244,8 +255,8 @@ export function ModelConfigDialog({
         name: form.name.trim() || '未命名端点',
         protocol: form.protocol,
         baseUrl: form.baseUrl.trim(),
-        // 留空不修改已存 Key：编辑已有端点时传 null（后端保留旧值）；新增端点传空串
-        apiKey: keyFilled ? form.apiKey.trim() : old ? null : '',
+        // 留空/遮掩值不修改已存 Key：编辑已有端点时传 null（后端保留旧值）；新增端点传空串
+        apiKey: userTypedNewKey ? form.apiKey.trim() : old ? null : '',
         hasKey: old ? (keyFilled ? true : Boolean(old.hasKey)) : keyFilled,
       };
       const nextEndpoints = editing
@@ -310,7 +321,7 @@ export function ModelConfigDialog({
 
   const setStage = useCallback(
     (
-      key: StageKey,
+      key: Exclude<StageKey, 'embedding'>,
       patch: Partial<{
         endpointId: string | null;
         model: string;
@@ -328,7 +339,7 @@ export function ModelConfigDialog({
   );
 
   const setStageModel = useCallback(
-    (key: StageKey, value: string) => {
+    (key: Exclude<StageKey, 'embedding'>, value: string) => {
       setModelDraft((prev) => ({ ...prev, [key]: value }));
       const timers = debounceRef.current;
       const prevTimer = timers.get(key);
@@ -364,6 +375,16 @@ export function ModelConfigDialog({
       config.stages[s.key]?.endpointId &&
       config.stages[s.key]?.model?.trim() !== '',
   ).length;
+
+  // 向量化只读行的展示文案：模型名 + 端点名
+  const kbEmbeddingLabel = kbEmbedding?.model?.trim()
+    ? [
+        kbEmbedding.model.trim(),
+        endpoints.find((ep) => ep.id === kbEmbedding.endpointId)?.name,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -603,6 +624,17 @@ export function ModelConfigDialog({
               先在上方添加服务端点，再为各阶段选择模型。
             </p>
           )}
+          {/* 向量化阶段：固定只读——与当前知识库的 per-KB 嵌入选型一致，
+              在库齿轮面板中修改（保证向量检索不失真） */}
+          <div className="flex items-center gap-2 rounded-md border bg-card px-2.5 py-1.5">
+            <span className="w-24 shrink-0 text-xs font-medium">向量化</span>
+            <span className="flex-1 font-mono text-xs text-muted-foreground">
+              {kbEmbeddingLabel || '当前库未配置嵌入模型'}
+            </span>
+            <span className="hidden w-28 shrink-0 text-right text-[10px] leading-3 text-muted-foreground sm:block">
+              随库配置；在库齿轮面板修改
+            </span>
+          </div>
           <div className="space-y-1.5">
             {STAGES.map((stage) => {
               const cfg = config.stages[stage.key] ?? {
@@ -677,8 +709,8 @@ export function ModelConfigDialog({
             })}
           </div>
           <p className="text-[11px] text-muted-foreground">
-            已配置 {configuredCount}/5 个阶段
-            {configuredCount < 5
+            已配置 {configuredCount}/{STAGES.length + 1} 个阶段（含随库配置的向量化）
+            {configuredCount < STAGES.length
               ? '；未配置完整时，对应阶段无法执行，可在上方补齐。'
               : '。'}
           </p>

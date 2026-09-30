@@ -46,6 +46,7 @@ from .store import (
     DATA_FILE_LOCK,
     DEFAULT_KB_ID,
     default_system_prompt,
+    get_kb_settings,
     get_config,
     get_docs,
     mark_embedding_meta,
@@ -173,6 +174,28 @@ def _resolve_stage(cfg: Mapping[str, Any], key: str) -> Tuple[Optional[Mapping[s
     return None, ""  # dangling endpointId -> treat as unconfigured at ask time
 
 
+def _resolve_kb_embedding(
+    cfg: Mapping[str, Any], kb_id: str
+) -> Tuple[Optional[Mapping[str, Any]], str]:
+    """per-KB 嵌入选型：读本库 kb.json 的 embedding {endpointId, model}，
+    在全局端点表里解析出端点 map。未配置/悬空引用 -> (None, "")。"""
+    try:
+        settings = get_kb_settings(kb_id)
+    except KeyError:
+        return None, ""
+    emb = settings.get("embedding") or {}
+    ep_id = emb.get("endpointId")
+    model = str(emb.get("model") or "").strip()
+    if not ep_id or not model:
+        return None, ""
+    for ep in cfg.get("endpoints") or []:
+        if str(ep.get("id")) == str(ep_id):
+            if not str(ep.get("baseUrl") or "").strip():
+                return None, ""
+            return ep, model
+    return None, ""
+
+
 def _round4(x: float) -> float:
     return round(float(x), 4)
 
@@ -233,6 +256,7 @@ async def compute_missing_vectors(
     written back). Returns doc_id -> vector for the just-computed subset.
     Caller thread must NOT hold DATA_FILE_LOCK while we await embed_texts —
     this fn is called outside the lock and only takes it for the writeback.
+    `ep`/`model` are the KB's own per-KB embedding settings resolved upstream.
     """
     missing: List[Mapping[str, Any]] = []
     for d in docs:
@@ -264,18 +288,29 @@ async def compute_missing_vectors(
     return vectors
 
 
-async def sync_all_background() -> None:
-    """Startup backfill: walk all KBs, embed + upsert docs missing vectors.
-    Never raises; logs progress. Doc-level failures are logged, others skipped.
-    """
+async def force_reembed_kb(kb_id: str) -> Dict[str, Any]:
+    """「重新嵌入」入口：强制对本库全部文档重新计算向量并 upsert（无视
+    embeddingMeta 旧标记）。返回 {docs, upserted}，库不存在抛 KeyError。
+    不重切块——切块只作用于之后上传的新文件。"""
     cfg = get_config()
-    ep, model = _resolve_stage(cfg, "embedding")
+    ep, model = _resolve_kb_embedding(cfg, kb_id)
     if ep is None or not model:
-        print("[sync_all] embedding 端点未配置，跳过向量补算")
-        return
-    from .store import get_kbs
+        raise ValueError("该知识库未配置向量嵌入端点/模型，请先在库配置中完成设置")
+    docs = get_docs(kb_id)
+    if not docs:
+        return {"docs": 0, "upserted": 0}
+    vectors = await compute_missing_vectors(kb_id, docs, ep, model, force=True)
+    return {"docs": len(docs), "upserted": len(vectors)}
 
+
+async def sync_all_background() -> None:
+    """Startup backfill: walk all KBs, embed + upsert docs missing vectors
+    (matched against each KB's OWN per-KB embedding model, so a KB whose
+    model changed gets fully re-embedded at next start). Never raises."""
+    cfg = get_config()
     try:
+        from .store import get_kbs
+
         kbs = get_kbs()
     except Exception as e:
         print(f"[sync_all] 读取知识库失败：{e}")
@@ -283,6 +318,12 @@ async def sync_all_background() -> None:
     for kb in kbs:
         kb_id = kb["kbId"]
         docs = kb["docs"]
+        if not docs:
+            continue
+        ep, model = _resolve_kb_embedding(cfg, kb_id)
+        if ep is None or not model:
+            print(f"[sync_all] kb={kb_id} 未配置 per-KB 嵌入端点/模型，跳过向量补算")
+            continue
         missing = [
             d
             for d in docs
@@ -295,7 +336,7 @@ async def sync_all_background() -> None:
         if not missing:
             print(f"[sync_all] kb={kb_id} 共 {len(docs)} 篇，向量齐备")
             continue
-        print(f"[sync_all] kb={kb_id} 缺向量 {len(missing)}/{len(docs)} 篇，开始补算…")
+        print(f"[sync_all] kb={kb_id} 缺向量 {len(missing)}/{len(docs)} 篇（本库模型 {model}），开始补算…")
         try:
             vectors = await compute_missing_vectors(kb_id, missing, ep, model)
             print(f"[sync_all] kb={kb_id} 已补算并 upsert {len(vectors)} 条向量")
@@ -316,7 +357,7 @@ async def _vector_candidates(
     """Returns (scored, vectorAvailable). Any embedding failure -> ([], False).
     Missing-vector docs are lazily embedded here (same rules as sync_all)."""
     try:
-        ep, model = _resolve_stage(cfg, "embedding")
+        ep, model = _resolve_kb_embedding(cfg, kb_id)
         if ep is None or not model:
             return [], False
         doc_ids = {str(d["id"]) for d in docs}
@@ -458,6 +499,50 @@ async def _oos_answer(
         return None
 
 
+async def _run_validation(
+    cfg: Mapping[str, Any],
+    answer: str,
+    cited_docs: List[Mapping[str, Any]],
+    docs_by_id: Mapping[str, Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Shared hallucination validation: validate-stage LLM first, rule
+    fallback. Returns None when validation is disabled or no cited docs —
+    callers skip the validate event in that case. Used by both the FAQ-RAG
+    path and the CLARIFY branch (clarify output may still carry [n])."""
+    if not cfg.get("enableValidation") or not cited_docs:
+        return None
+    citations = [int(m.group(1)) for m in CITATION_RE.finditer(answer or "")]
+    citations = [n for n in citations if n > 0]
+    contexts = [
+        (
+            str(docs_by_id.get(str(r["id"]), {}).get("title", "")),
+            str(docs_by_id.get(str(r["id"]), {}).get("content", "")),
+        )
+        for r in cited_docs
+    ]
+    validation: Optional[Dict[str, Any]] = None
+    val_ep, val_model = _resolve_stage(cfg, "validate")
+    if val_ep is not None:
+        payload = _validate_payload(answer, contexts)
+        try:
+            llm_text = await chat_invoke(val_ep, val_model, [
+                {"role": "system", "content": "你是引用与幻觉校验器，只输出 JSON {\"valid\":bool,\"citations\":[int],\"reason\":str}"},
+                {"role": "user", "content": payload},
+            ], 0.0, 512)
+            parsed = first_json_object(llm_text or "")
+            if isinstance(parsed, Mapping):
+                validation = {
+                    "valid": bool(parsed.get("valid")),
+                    "citations": [int(x) for x in (parsed.get("citations") or []) if isinstance(x, int)],
+                    "reason": str(parsed.get("reason") or ""),
+                }
+        except Exception:
+            validation = None
+    if validation is None:
+        validation = rule_fallback_validate(answer, len(contexts), citations)
+    return validation
+
+
 async def run_ask(
     question: str,
     kb_id: str = DEFAULT_KB_ID,
@@ -534,7 +619,10 @@ async def run_ask(
             detail["top1Score"] = _round4(top1_score)
             detail["threshold"] = _round4(threshold)
             yield {"type": "stage", "stage": "intent", "data": detail, "kbId": kb_id}
-            # 静默短路：不发 retrieve/rerank 事件，直接进生成
+            # 澄清分支：跳过 BM25/rerank（不发这两阶段事件），但仍运行幻觉校验
+            # ——生成虽以澄清为目标，实测仍会带 [n] 引用，需要校验并支持悬浮溯源
+            yield {"type": "stage", "stage": "generate", "data": {"model": gen_model}, "kbId": kb_id}
+            answer = ""
             async for ev in _generate_stream(
                 cfg,
                 question,
@@ -546,7 +634,28 @@ async def run_ask(
                 goal=intent_goal(cfg, "CLARIFY"),
                 cite=False,
             ):
+                if ev.get("type") == "done_answer":
+                    answer = ev.get("answer") or ""
+                    break
                 yield ev
+            if answer == "":
+                # done_answer 缺席说明生成已 yield error 并终止，直接结束
+                return
+            cited_docs = vector_list
+            # ---------------- validate（澄清输出同样校验 [n]）--------------
+            validation = await _run_validation(cfg, answer, cited_docs, docs_by_id)
+            if validation is not None:
+                yield {"type": "stage", "stage": "validate", "data": validation, "kbId": kb_id}
+            sources = [
+                {
+                    "id": str(r["id"]),
+                    "title": str(docs_by_id.get(str(r["id"]), {}).get("title", "")),
+                    "content": str(docs_by_id.get(str(r["id"]), {}).get("content", "")),
+                    "score": _round4(r["score"]),
+                }
+                for r in cited_docs
+            ]
+            yield {"type": "done", "answer": answer, "sources": sources, "kbId": kb_id}
             return
 
         bm25_list = bm25_search(question, docs, candidate_k)
@@ -645,37 +754,9 @@ async def run_ask(
             # 生成已 yield error 并终止（或空流）：done_answer 缺席，直接返回
             return
 
-        # ---------------- validate -------------------------------------------
-        validation = None
-        if cfg.get("enableValidation") and reranked:
-            citations = [int(m.group(1)) for m in CITATION_RE.finditer(answer or "")]
-            citations = [n for n in citations if n > 0]
-            contexts = [
-                (
-                    str(docs_by_id.get(str(r["id"]), {}).get("title", "")),
-                    str(docs_by_id.get(str(r["id"]), {}).get("content", "")),
-                )
-                for r in reranked
-            ]
-            val_ep, val_model = _resolve_stage(cfg, "validate")
-            if val_ep is not None:
-                payload = _validate_payload(answer, contexts)
-                try:
-                    llm_text = await chat_invoke(val_ep, val_model, [
-                        {"role": "system", "content": "你是引用与幻觉校验器，只输出 JSON {\"valid\":bool,\"citations\":[int],\"reason\":str}"},
-                        {"role": "user", "content": payload},
-                    ], 0.0, 512)
-                    parsed = first_json_object(llm_text or "")
-                    if isinstance(parsed, Mapping):
-                        validation = {
-                            "valid": bool(parsed.get("valid")),
-                            "citations": [int(x) for x in (parsed.get("citations") or []) if isinstance(x, int)],
-                            "reason": str(parsed.get("reason") or ""),
-                        }
-                except Exception:
-                    validation = None
-            if validation is None:
-                validation = rule_fallback_validate(answer, len(contexts), citations)
+        # ---------------- validate (shared LLM + rule fallback) --------------
+        validation = await _run_validation(cfg, answer, reranked, docs_by_id)
+        if validation is not None:
             yield {"type": "stage", "stage": "validate", "data": validation, "kbId": kb_id}
 
         # ---------------- done: sources from reranked ------------------------
