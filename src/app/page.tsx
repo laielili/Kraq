@@ -103,7 +103,7 @@ export default function Home() {
     currentKbIdRef.current = currentKbId;
   }, [currentKbId]);
 
-  const CURRENT_KB_KEY = 'dataagent.currentKbId';
+  const CURRENT_KB_KEY = 'kraq.currentKbId';
 
   const refreshKb = useCallback(async (kbId: string) => {
     try {
@@ -465,8 +465,8 @@ export default function Home() {
           </div>
           <div className="min-w-0">
             <h1 className="truncate font-serif text-sm font-semibold leading-tight">
-              DataAgent · 知识库智能问答
-            </h1>
+                          Kraq · 知识库智能问答
+                        </h1>
             <p className="truncate text-[10px] leading-tight text-muted-foreground">
               意图识别 · 混合检索 · 重排序 · 引用生成 · 幻觉校验
             </p>

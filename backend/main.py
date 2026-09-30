@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DataAgent backend — routes assembled on the implemented modules.
+"""Kraq backend — routes assembled on the implemented modules.
 
 Run via ../main.py (mounts this app under /api) or standalone:
     python -m backend.main
@@ -45,7 +45,7 @@ from .store import (
 )
 from .common import now_iso
 
-app = FastAPI(title="DataAgent Backend", version="0.3.0")
+app = FastAPI(title="Kraq Backend", version="0.3.0")
 
 app.add_middleware(
     CORSMiddleware,

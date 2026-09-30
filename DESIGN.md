@@ -1,4 +1,4 @@
-# DESIGN.md — DataAgent 知识库智能问答系统
+# DESIGN.md — Kraq 知识库智能问答系统
 
 ## 气质与意象
 

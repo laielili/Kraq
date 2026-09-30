@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-One-click starter for DataAgent:
+One-click starter for Kraq:
 - Starts Next.js dev server (frontend) on port 3000
 - Starts Python API backend on port 8000
 - Proxies non-API requests to the frontend server
@@ -55,7 +55,7 @@ def start_frontend():
     )
     def log_output():
         for line in frontend_proc.stdout:
-            print(f"[frontend] {line.rstrip()}")
+            print(f"[kraq] {line.rstrip()}")
     threading.Thread(target=log_output, daemon=True).start()
     # Wait for server to be ready
     for _ in range(30):

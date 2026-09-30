@@ -3,7 +3,7 @@
 Contract (user-facing): the config dialog always takes PLAINTEXT keys. The
 backend persists the plaintext ONLY here (gitignored .env) and stores an
 `env:VAR` reference in config.json; requests resolve the reference at call
-time (models_client.resolve_api_key). Variables are named DATAAGENT_KEY_<n>
+time (models_client.resolve_api_key). Variables are named KRAQ_KEY_<n>
 and garbage-collected when no endpoint references them anymore.
 
 Values are deduplicated: saving the same plaintext twice reuses one variable.
@@ -19,7 +19,7 @@ from typing import Dict, Set
 from .dotenv import load_env_file
 
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
-_PREFIX = "DATAAGENT_KEY_"
+_PREFIX = "KRAQ_KEY_"
 
 _LOCK = threading.Lock()
 # in-memory mirror; refreshed from disk on first use and after every write
@@ -42,11 +42,11 @@ def _write_vars(vars: Dict[str, str]) -> None:
     """Atomically rewrite .env with the managed vars plus a header comment.
 
     Real environment variables are NOT written here (they are not file-backed);
-    only DATAAGENT_KEY_* entries are managed.
+    only KRAQ_KEY_* entries are managed.
     """
     lines = [
-        "# DataAgent endpoint API keys (auto-managed by the backend).",
-        "# This file is gitignored; config.json only holds env:DATAAGENT_KEY_* references.",
+        "# Kraq endpoint API keys (auto-managed by the backend).",
+        "# This file is gitignored; config.json only holds env:KRAQ_KEY_* references.",
         "",
     ]
     lines.extend(f"{k}={v}" for k, v in sorted(vars.items()))
@@ -82,7 +82,7 @@ def store_secret(plain: str) -> str:
 
 
 def gc_secrets(referenced: Set[str]) -> None:
-    """Remove DATAAGENT_KEY_* vars no endpoint references anymore."""
+    """Remove KRAQ_KEY_* vars no endpoint references anymore."""
     with _LOCK:
         vars = _read_vars()
         keep = {

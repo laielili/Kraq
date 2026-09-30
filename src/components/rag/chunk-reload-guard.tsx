@@ -12,7 +12,7 @@ import { useEffect } from 'react';
 export function ChunkReloadGuard() {
   useEffect(() => {
     const THROTTLE_MS = 15_000;
-    const KEY = 'dataagent.chunkReloadAt';
+    const KEY = 'kraq.chunkReloadAt';
 
     const reloadOnce = (reason: string) => {
       try {

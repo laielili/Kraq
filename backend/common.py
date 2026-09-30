@@ -1,4 +1,4 @@
-"""Shared helpers and types for the DataAgent backend."""
+"""Shared helpers and types for the Kraq backend."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any, Dict
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent.parent  # .../DataAgent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent  # .../Kraq
 DATA_DIR = PROJECT_ROOT / "data"
 CONFIG_FILE = DATA_DIR / "config.json"
 KB_FILE = DATA_DIR / "kb.json"
