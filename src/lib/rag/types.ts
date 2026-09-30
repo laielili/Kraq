@@ -26,6 +26,8 @@ export interface KbEmbeddingCfg {
 export interface KbSettings {
   embedding: KbEmbeddingCfg;
   chunking: ChunkingCfg;
+  /** 知识库简介（意图路由的速览元数据，留空未填） */
+  description?: string;
 }
 
 export interface ScoredDoc {

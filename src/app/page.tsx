@@ -531,7 +531,6 @@ export default function Home() {
                   >
                     配置模型
                   </Button>
-                  <p className="font-serif text-xs font-semibold">参数</p>
                   <p className="font-serif text-xs font-semibold">检索</p>
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">

@@ -41,6 +41,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
+import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import type { ChunkingCfg, EndpointConfig, KbEmbeddingCfg, KbSettings } from '@/lib/rag/types';
 
@@ -171,6 +172,7 @@ export function KbManagerDialog({
   const [modelDraft, setModelDraft] = useState('');
   const [maxCharsDraft, setMaxCharsDraft] = useState(600);
   const [overlapDraft, setOverlapDraft] = useState(50);
+  const [descDraft, setDescDraft] = useState('');
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const newInputRef = useRef<HTMLInputElement>(null);
@@ -287,6 +289,7 @@ export function KbManagerDialog({
       setModelDraft(s?.embedding.model ?? '');
       setMaxCharsDraft(s?.chunking.maxChars ?? 600);
       setOverlapDraft(s?.chunking.overlap ?? 50);
+      setDescDraft(s?.description ?? '');
     });
   }
 
@@ -304,6 +307,7 @@ export function KbManagerDialog({
         setModelDraft(s.embedding.model);
         setMaxCharsDraft(s.chunking.maxChars);
         setOverlapDraft(s.chunking.overlap);
+        setDescDraft(s.description ?? '');
       }
     } catch (e) {
       setLocalError(e instanceof Error ? e.message : '保存失败');
@@ -317,6 +321,22 @@ export function KbManagerDialog({
     setReembedPending(true);
     setLocalError(null);
     try {
+      // 「保存 & 重新嵌入」语义：切块草稿与本库配置不一致时先保存，再重嵌
+      if (
+        kbSettings &&
+        (maxCharsDraft !== kbSettings.chunking.maxChars ||
+          overlapDraft !== kbSettings.chunking.overlap)
+      ) {
+        await onSaveSettings(confirmReembed.kbId, {
+          chunking: { maxChars: maxCharsDraft, overlap: overlapDraft },
+        });
+        const s = await fetchKbSettings(confirmReembed.kbId);
+        setKbSettings(s);
+        if (s) {
+          setMaxCharsDraft(s.chunking.maxChars);
+          setOverlapDraft(s.chunking.overlap);
+        }
+      }
       await onReembed(confirmReembed.kbId);
       setConfirmReembed(null);
     } catch (e) {
@@ -682,7 +702,7 @@ export function KbManagerDialog({
 
           <div className="space-y-1.5">
             <label htmlFor="kb-rename-input" className="font-serif text-xs font-semibold">
-              改名
+              名称
             </label>
             <div className="flex items-center gap-2">
               <Input
@@ -707,6 +727,47 @@ export function KbManagerDialog({
                 onClick={() => void handleRename()}
               >
                 <Pencil className="size-3" />
+                保存
+              </Button>
+            </div>
+          </div>
+
+          {/* 简介（per-KB 元数据，供未来意图路由导航） */}
+          <div className="space-y-1.5">
+            <label
+              htmlFor="kb-desc-input"
+              className="font-serif text-xs font-semibold"
+            >
+              简介
+            </label>
+            <Textarea
+              id="kb-desc-input"
+              value={descDraft}
+              onChange={(e) => setDescDraft(e.target.value)}
+              placeholder="一句话/一段话介绍本知识库收录的内容，用于意图路由快速导航……"
+              className="min-h-20 resize-none bg-card text-xs"
+              maxLength={2000}
+            />
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 shrink-0 gap-1 text-xs"
+                disabled={
+                  savingKey != null ||
+                  descDraft.trim() === (kbSettings?.description ?? '')
+                }
+                onClick={() =>
+                  void savePatch('description', {
+                    description: descDraft.trim(),
+                  })
+                }
+              >
+                {savingKey === 'description' ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Pencil className="size-3" />
+                )}
                 保存
               </Button>
             </div>
@@ -901,21 +962,18 @@ export function KbManagerDialog({
                       保存
                     </Button>
                   </div>
-                  <p className="text-[10px] text-muted-foreground">
-                    仅对之后上传的新文件生效；已有档案按当时参数切块，不重切。
-                  </p>
                 </div>
               </>
             )}
           </div>
 
-          {/* 重新嵌入（红色 / 二次确认） */}
-          <div className="space-y-1.5 border-t pt-2.5">
+          {/* 「保存 & 重新嵌入」：确认后先保存切块草稿，再触发该库重嵌入 */}
+          <div className="flex items-center gap-2">
             <Button
               size="sm"
               variant="outline"
-              className="h-8 w-full gap-1.5 border-destructive/40 text-xs text-destructive hover:bg-destructive/10"
-              disabled={actionPending || submitting || reembedPending}
+              className="h-8 flex-1 gap-1.5 border-destructive/40 text-xs text-destructive hover:bg-destructive/10"
+              disabled={savingKey != null}
               onClick={() => {
                 setConfirmReembed({
                   kbId: settingsFor?.kbId ?? '',
@@ -924,11 +982,8 @@ export function KbManagerDialog({
               }}
             >
               <RefreshCw className="size-3.5" />
-              重新嵌入
+              保存 &amp; 重新嵌入
             </Button>
-            <p className="text-[10px] text-muted-foreground">
-              对本库全部档案强制重新计算向量；不重切块。
-            </p>
           </div>
 
           <div className="space-y-1.5 border-t pt-2.5">

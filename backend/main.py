@@ -164,7 +164,12 @@ async def models_get():
 # kbs (multi-KB registry; 每 kb 自带 per-KB 嵌入选型 + 切块参数)
 # ---------------------------------------------------------------------------
 def _kb_summary(kb: dict) -> dict:
-    return {"kbId": kb["kbId"], "name": kb["name"], "docCount": len(kb["docs"])}
+    return {
+        "kbId": kb["kbId"],
+        "name": kb["name"],
+        "docCount": len(kb["docs"]),
+        "description": kb.get("description") or "",
+    }
 
 
 def _validate_kb_embed_patch(cfg: Mapping[str, object], embedding: Mapping[str, object],
@@ -245,9 +250,11 @@ async def kb_settings_put(kb_id: str, request: Request):
     except Exception:
         return _err(400, "请求体不是合法 JSON")
     if not isinstance(body, Mapping) or (
-        "embedding" not in body and "chunking" not in body
+        "embedding" not in body
+        and "chunking" not in body
+        and "description" not in body
     ):
-        return _err(400, "至少提供 embedding 或 chunking 之一")
+        return _err(400, "至少提供 embedding、chunking 或 description 之一")
     embedding = body.get("embedding") if isinstance(body.get("embedding"), Mapping) else {}
     chunking = body.get("chunking") if isinstance(body.get("chunking"), Mapping) else {}
     try:
@@ -272,12 +279,15 @@ async def kb_settings_put(kb_id: str, request: Request):
                 settings_patch["embedding"] = embedding
             if "chunking" in body:
                 settings_patch["chunking"] = chunking
+            if "description" in body:
+                settings_patch["description"] = body.get("description")
             updated = update_kb_settings(kb_id, settings_patch)
         return JSONResponse({
             "kbId": updated["kbId"],
             "name": updated["name"],
             "embedding": updated["embedding"],
             "chunking": updated["chunking"],
+            "description": updated.get("description") or "",
         })
     except Exception as e:
         return _err(500, f"保存知识库配置失败：{e}")

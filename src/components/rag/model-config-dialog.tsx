@@ -376,11 +376,11 @@ export function ModelConfigDialog({
       config.stages[s.key]?.model?.trim() !== '',
   ).length;
 
-  // 向量化只读行的展示文案：模型名 + 端点名
+  // 向量化只读行的展示文案：与下方流程选型行同序，端点名在前、模型名在后
   const kbEmbeddingLabel = kbEmbedding?.model?.trim()
     ? [
-        kbEmbedding.model.trim(),
         endpoints.find((ep) => ep.id === kbEmbedding.endpointId)?.name,
+        kbEmbedding.model.trim(),
       ]
         .filter(Boolean)
         .join(' · ')
@@ -625,14 +625,14 @@ export function ModelConfigDialog({
             </p>
           )}
           {/* 向量化阶段：固定只读——与当前知识库的 per-KB 嵌入选型一致，
-              在库齿轮面板中修改（保证向量检索不失真） */}
+              在知识库配置面板中修改（保证向量检索不失真） */}
           <div className="flex items-center gap-2 rounded-md border bg-card px-2.5 py-1.5">
             <span className="w-24 shrink-0 text-xs font-medium">向量化</span>
             <span className="flex-1 font-mono text-xs text-muted-foreground">
               {kbEmbeddingLabel || '当前库未配置嵌入模型'}
             </span>
             <span className="hidden w-28 shrink-0 text-right text-[10px] leading-3 text-muted-foreground sm:block">
-              随库配置；在库齿轮面板修改
+              随库配置，请在知识库配置面板修改
             </span>
           </div>
           <div className="space-y-1.5">

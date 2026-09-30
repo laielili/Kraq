@@ -345,6 +345,13 @@ def _norm_system_prompt(value: object) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # per-KB embedding + chunking（向量嵌入模型与切块参数下沉到知识库维度）
 # ---------------------------------------------------------------------------
+def _norm_description(value: object) -> str:
+    """知识库简介：单段纯文本， trim + 上限 2000 字（意图路由的速览元数据）。"""
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:2000]
+
+
 def _norm_kb_chunking(value: object) -> dict:
     """chunking {maxChars, overlap}; 重叠 >= 块长时钳制到 maxChars-50（与旧全局规则一致）。"""
     raw = value if isinstance(value, Mapping) else {}
@@ -373,13 +380,14 @@ def _norm_kb_embedding(value: object) -> dict:
 
 
 def get_kb_settings(kb_id: str) -> dict:
-    """本库生效的 per-KB 配置：{embedding, chunking}。库不存在抛 KeyError。"""
+    """本库生效的 per-KB 配置：{embedding, chunking, description}。库不存在抛 KeyError。"""
     kb = get_kb(kb_id)
     if kb is None:
         raise KeyError(f"知识库不存在：{kb_id}")
     return {
         "embedding": kb.get("embedding") or {"endpointId": None, "model": ""},
         "chunking": kb.get("chunking") or dict(KB_DEFAULT_CHUNKING),
+        "description": kb.get("description") or "",
     }
 
 
@@ -506,11 +514,13 @@ def new_doc_id() -> str:
     return str(uuid.uuid4())
 
 
-def _kb_entry(kb_id: str, name: str, docs: list, embedding: object = None, chunking: object = None) -> dict:
-    """Standard kb entry shape with per-KB embedding/chunking fields."""
+def _kb_entry(kb_id: str, name: str, docs: list, embedding: object = None, chunking: object = None, description: object = None) -> dict:
+    """Standard kb entry shape with per-KB embedding/chunking/description fields."""
     return {
         "kbId": kb_id,
         "name": name,
+        # 简介：供未来意图路由的"知识库路由"节点快速导航（LLM 读取的元数据）
+        "description": _norm_description(description),
         "docs": docs,
         "embedding": _norm_kb_embedding(embedding),
         "chunking": _norm_kb_chunking(chunking),
@@ -560,6 +570,7 @@ def load_or_seed_kbs() -> List[dict]:
                     "docs": [d for d in (kb.get("docs") or []) if isinstance(d, Mapping)],
                     "embedding": kb.get("embedding"),
                     "chunking": kb.get("chunking"),
+                    "description": kb.get("description"),
                 }
             )
     if not kbs:
@@ -603,6 +614,7 @@ def load_or_seed_kbs() -> List[dict]:
         entry = {
             "kbId": kb_id,
             "name": str(kb.get("name") or kb_id),
+            "description": _norm_description(kb.get("description")),
             "docs": docs,
             "embedding": _norm_kb_embedding(embedding_raw),
             "chunking": _norm_kb_chunking(chunking_raw),
@@ -674,7 +686,7 @@ def rename_kb(kb_id: str, name: str) -> Optional[dict]:
 
 
 def update_kb_settings(kb_id: str, patch: Mapping[str, object]) -> Optional[dict]:
-    """PUT /api/kbs/{kbId} extension: partial update of per-KB embedding/chunking.
+    """PUT /api/kbs/{kbId} extension: partial update of per-KB embedding/chunking/description.
     Only the provided keys change; unknown keys are ignored. Caller must hold
     DATA_FILE_LOCK. Returns the updated entry or None when the kb is missing."""
     kbs = load_or_seed_kbs()
@@ -685,6 +697,8 @@ def update_kb_settings(kb_id: str, patch: Mapping[str, object]) -> Optional[dict
                 kb["embedding"] = _norm_kb_embedding(patch["embedding"])
             if isinstance(patch.get("chunking"), Mapping):
                 kb["chunking"] = _norm_kb_chunking(patch["chunking"])
+            if "description" in patch:
+                kb["description"] = _norm_description(patch.get("description"))
             if isinstance(patch.get("name"), str) and str(patch["name"]).strip():
                 kb["name"] = str(patch["name"]).strip()
             atomic_write_json(KB_FILE, {"kbs": kbs})
