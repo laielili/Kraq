@@ -34,6 +34,15 @@ from .seed_docs import SEED_DOCS
 DEFAULT_KB_ID = "default"
 DEFAULT_KB_NAME = "默认知识库"
 
+# 默认库的示例问题：kb.json 里 suggestions 键缺失（功能上线前的库条目）时的种子值。
+# 键一旦存在（哪怕是 []）就按用户所写生效，用户清空四个输入框是真清空。
+DEFAULT_SUGGESTIONS = [
+    "什么是 RAG？它解决什么问题？",
+    "BM25 和向量检索各有什么优缺点？",
+    "系统如何防止大模型幻觉？",
+    "帮我找一下关于重排序的资料",
+]
+
 # One asyncio.Lock protects BOTH config.json and kb.json (per brief).
 DATA_FILE_LOCK = asyncio.Lock()
 
@@ -352,6 +361,26 @@ def _norm_description(value: object) -> str:
     return value.strip()[:2000]
 
 
+_SUGGESTION_MAX_CHARS = 200
+_SUGGESTION_MAX_COUNT = 4
+
+
+def _norm_suggestions(value: object) -> List[str]:
+    """示例问题：压平空白、丢空串、去重、每条 ≤200 字、最多 4 条（与配置面板的四个输入框一致）。"""
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: List[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = " ".join(item.split())[:_SUGGESTION_MAX_CHARS]
+        if text and text not in out:
+            out.append(text)
+        if len(out) == _SUGGESTION_MAX_COUNT:
+            break
+    return out
+
+
 def _norm_kb_chunking(value: object) -> dict:
     """chunking {maxChars, overlap}; 重叠 >= 块长时钳制到 maxChars-50（与旧全局规则一致）。"""
     raw = value if isinstance(value, Mapping) else {}
@@ -380,7 +409,7 @@ def _norm_kb_embedding(value: object) -> dict:
 
 
 def get_kb_settings(kb_id: str) -> dict:
-    """本库生效的 per-KB 配置：{embedding, chunking, description}。库不存在抛 KeyError。"""
+    """本库生效的 per-KB 配置：{embedding, chunking, description, suggestions}。库不存在抛 KeyError。"""
     kb = get_kb(kb_id)
     if kb is None:
         raise KeyError(f"知识库不存在：{kb_id}")
@@ -388,6 +417,7 @@ def get_kb_settings(kb_id: str) -> dict:
         "embedding": kb.get("embedding") or {"endpointId": None, "model": ""},
         "chunking": kb.get("chunking") or dict(KB_DEFAULT_CHUNKING),
         "description": kb.get("description") or "",
+        "suggestions": list(kb.get("suggestions") or []),
     }
 
 
@@ -514,13 +544,15 @@ def new_doc_id() -> str:
     return str(uuid.uuid4())
 
 
-def _kb_entry(kb_id: str, name: str, docs: list, embedding: object = None, chunking: object = None, description: object = None) -> dict:
+def _kb_entry(kb_id: str, name: str, docs: list, embedding: object = None, chunking: object = None, description: object = None, suggestions: object = None) -> dict:
     """Standard kb entry shape with per-KB embedding/chunking/description fields."""
     return {
         "kbId": kb_id,
         "name": name,
         # 简介：供未来意图路由的"知识库路由"节点快速导航（LLM 读取的元数据）
         "description": _norm_description(description),
+        # 示例问题：该库对话面板空态上的快捷提问按钮
+        "suggestions": _norm_suggestions(suggestions),
         "docs": docs,
         "embedding": _norm_kb_embedding(embedding),
         "chunking": _norm_kb_chunking(chunking),
@@ -547,10 +579,12 @@ def _legacy_global_settings() -> Tuple[dict, dict]:
 
 
 def load_or_seed_kbs() -> List[dict]:
-    """Read kb.json into [{kbId, name, docs, embedding, chunking}].
+    """Read kb.json into [{kbId, name, docs, embedding, chunking, description, suggestions}].
     Legacy {docs:[...]} → default KB. A kb entry missing embedding/chunking
     (pre-migration file) is seeded from the legacy config snapshot:
-    old global stages.embedding + chunking."""
+    old global stages.embedding + chunking. A default-KB entry with no
+    suggestions key (pre-feature file) is seeded with DEFAULT_SUGGESTIONS;
+    an explicit key wins, so clearing all four boxes stays cleared."""
     try:
         parsed = read_json_file(KB_FILE)
     except Exception:
@@ -571,6 +605,7 @@ def load_or_seed_kbs() -> List[dict]:
                     "embedding": kb.get("embedding"),
                     "chunking": kb.get("chunking"),
                     "description": kb.get("description"),
+                    "suggestions": kb.get("suggestions"),
                 }
             )
     if not kbs:
@@ -611,18 +646,32 @@ def load_or_seed_kbs() -> List[dict]:
             )
         embedding_raw = kb.get("embedding") if kb.get("embedding") is not None else fallback_embedding
         chunking_raw = kb.get("chunking") if kb.get("chunking") is not None else fallback_chunking
-        entry = {
-            "kbId": kb_id,
-            "name": str(kb.get("name") or kb_id),
-            "description": _norm_description(kb.get("description")),
-            "docs": docs,
-            "embedding": _norm_kb_embedding(embedding_raw),
-            "chunking": _norm_kb_chunking(chunking_raw),
-        }
+        suggestions_raw = kb.get("suggestions")
+        if suggestions_raw is None and kb_id == DEFAULT_KB_ID:
+            suggestions_raw = DEFAULT_SUGGESTIONS
+        entry = _kb_entry(
+            kb_id,
+            str(kb.get("name") or kb_id),
+            docs,
+            embedding_raw,
+            chunking_raw,
+            kb.get("description"),
+            suggestions_raw,
+        )
         seen[kb_id] = entry
         out.append(entry)
     if not out:
-        out = [_kb_entry(DEFAULT_KB_ID, DEFAULT_KB_NAME, [], fallback_embedding, fallback_chunking)]
+        out = [
+            _kb_entry(
+                DEFAULT_KB_ID,
+                DEFAULT_KB_NAME,
+                [],
+                fallback_embedding,
+                fallback_chunking,
+                None,
+                DEFAULT_SUGGESTIONS,
+            )
+        ]
     return out
 
 
@@ -661,13 +710,7 @@ def create_kb(name: str, embedding: object = None, chunking: object = None) -> d
         candidate = normalize_kb_id(f"{slug[:24]}-{uuid.uuid4().hex[:6]}")
         if candidate not in {kb["kbId"] for kb in kbs}:
             break
-    entry = {
-        "kbId": candidate,
-        "name": name,
-        "docs": [],
-        "embedding": _norm_kb_embedding(embedding),
-        "chunking": _norm_kb_chunking(chunking),
-    }
+    entry = _kb_entry(candidate, name, [], embedding, chunking)
     kbs.append(entry)
     atomic_write_json(KB_FILE, {"kbs": kbs})
     return entry
@@ -686,7 +729,7 @@ def rename_kb(kb_id: str, name: str) -> Optional[dict]:
 
 
 def update_kb_settings(kb_id: str, patch: Mapping[str, object]) -> Optional[dict]:
-    """PUT /api/kbs/{kbId} extension: partial update of per-KB embedding/chunking/description.
+    """PUT /api/kbs/{kbId} extension: partial update of per-KB embedding/chunking/description/suggestions.
     Only the provided keys change; unknown keys are ignored. Caller must hold
     DATA_FILE_LOCK. Returns the updated entry or None when the kb is missing."""
     kbs = load_or_seed_kbs()
@@ -699,6 +742,8 @@ def update_kb_settings(kb_id: str, patch: Mapping[str, object]) -> Optional[dict
                 kb["chunking"] = _norm_kb_chunking(patch["chunking"])
             if "description" in patch:
                 kb["description"] = _norm_description(patch.get("description"))
+            if "suggestions" in patch:
+                kb["suggestions"] = _norm_suggestions(patch.get("suggestions"))
             if isinstance(patch.get("name"), str) and str(patch["name"]).strip():
                 kb["name"] = str(patch["name"]).strip()
             atomic_write_json(KB_FILE, {"kbs": kbs})
@@ -779,9 +824,180 @@ def save_docs(kb_id: str, docs: List[dict]) -> None:
     replace_docs(kb_id, docs)
 
 
+# ---------------------------------------------------------------------------
+# Link Clip Task Queue (async async extraction)
+# ---------------------------------------------------------------------------
+from dataclasses import asdict, dataclass, field, fields
+from typing import Literal
+import time
+
+TaskStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
+TaskStage = Literal[
+    "queued", "fetching", "parsing", "chunking", "indexing",
+    "completed", "failed", "cancelled",
+]
+
+TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+
+# 历史任务保留上限：活跃任务全留，终态任务只留最近这么多条（tasks.json 不能只增不减）
+MAX_FINISHED_TASKS = 50
+
+
+@dataclass
+class LinkClipTask:
+    task_id: str
+    kb_id: str
+    url: str
+    status: TaskStatus = "pending"
+    progress: int = 0
+    stage: TaskStage = "queued"
+    detail: str | None = None
+    page_title: str | None = None
+    error: str | None = None
+    result: dict | None = None
+    created_at: str = field(default_factory=now_iso)
+    updated_at: str = field(default_factory=now_iso)
+    cancel_requested: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LinkClipTask":
+        # 只取当前模型认识的字段：tasks.json 可能被别的版本的进程写过，
+        # 多出来的键不能让构造直接炸掉（炸了会被 _load_tasks 吞掉，
+        # 表现为"任务列表永远为空"，而不是格式不兼容）。
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
+
+TASKS_FILE = PROJECT_ROOT / "data" / "tasks.json"
+
+def _load_tasks() -> List[LinkClipTask]:
+    try:
+        raw = read_json_file(TASKS_FILE)
+        if isinstance(raw, list):
+            return [LinkClipTask.from_dict(t) for t in raw]
+    except Exception:
+        pass
+    return []
+
+def _save_tasks(tasks: List[LinkClipTask]) -> None:
+    active = [t for t in tasks if t.status not in TERMINAL_STATUSES]
+    finished = [t for t in tasks if t.status in TERMINAL_STATUSES]
+    finished.sort(key=lambda t: t.updated_at, reverse=True)
+    kept = active + finished[:MAX_FINISHED_TASKS]
+    atomic_write_json(TASKS_FILE, [t.to_dict() for t in kept])
+
+async def create_link_clip_task(kb_id: str, url: str) -> LinkClipTask:
+    """创建新的链接剪藏任务，返回任务对象。"""
+    async with DATA_FILE_LOCK:
+        tasks = _load_tasks()
+        task = LinkClipTask(
+            task_id=str(uuid.uuid4()),
+            kb_id=normalize_kb_id(kb_id),
+            url=url,
+        )
+        tasks.append(task)
+        _save_tasks(tasks)
+        return task
+
+async def get_link_clip_task(task_id: str) -> LinkClipTask | None:
+    async with DATA_FILE_LOCK:
+        tasks = _load_tasks()
+        for t in tasks:
+            if t.task_id == task_id:
+                return t
+        return None
+
+async def list_link_clip_tasks(kb_id: str | None = None) -> List[LinkClipTask]:
+    async with DATA_FILE_LOCK:
+        tasks = _load_tasks()
+        if kb_id:
+            kb_id = normalize_kb_id(kb_id)
+            tasks = [t for t in tasks if t.kb_id == kb_id]
+        return sorted(tasks, key=lambda t: t.created_at, reverse=True)
+
+async def update_link_clip_task(
+    task_id: str,
+    *,
+    status: TaskStatus | None = None,
+    progress: int | None = None,
+    stage: TaskStage | None = None,
+    detail: str | None = None,
+    page_title: str | None = None,
+    error: str | None = None,
+    result: dict | None = None,
+    cancel_requested: bool | None = None,
+) -> LinkClipTask | None:
+    """更新任务字段（部分更新）。
+
+    两条不变式（对应 plan/link-clip-progress.md §2.2）：
+    - 终态守卫：任务一旦 completed/failed/cancelled，后续写入一律丢弃。
+      否则两类迟到写都能把它复活成 running —— 一是发射即忘的进度协程，
+      二是"排队中已被取消、worker 随后取走"时 _run_with_tracking 的 running 写。
+      复活后前端轮询永远停不下来。
+    - 进度单调：progress 只增不减，避免线程回调乱序造成回跳。
+    """
+    async with DATA_FILE_LOCK:
+        tasks = _load_tasks()
+        for t in tasks:
+            if t.task_id != task_id:
+                continue
+            if t.status in TERMINAL_STATUSES:
+                return t
+            if status is not None:
+                t.status = status
+            if progress is not None:
+                t.progress = max(t.progress, max(0, min(100, progress)))
+            if stage is not None:
+                t.stage = stage
+            if detail is not None:
+                t.detail = detail
+            if page_title is not None:
+                t.page_title = page_title
+            if error is not None:
+                t.error = error
+            if result is not None:
+                t.result = result
+            if cancel_requested is not None:
+                t.cancel_requested = cancel_requested
+            t.updated_at = now_iso()
+            _save_tasks(tasks)
+            return t
+        return None
+
+
+async def reclaim_interrupted_tasks() -> int:
+    """把上个进程遗留的 pending/running 标为 failed，返回回收条数。
+
+    执行状态（队列、协程、线程）全在内存，进程一死任务就永不推进；
+    不回收的话前端会无限轮询这些记录。
+    """
+    async with DATA_FILE_LOCK:
+        tasks = _load_tasks()
+        reclaimed = 0
+        for t in tasks:
+            if t.status in TERMINAL_STATUSES:
+                continue
+            t.status = "failed"
+            t.stage = "failed"
+            t.error = "服务重启导致任务中断，请重新提交"
+            t.updated_at = now_iso()
+            reclaimed += 1
+        if reclaimed:
+            _save_tasks(tasks)
+        return reclaimed
+
+async def request_cancel_link_clip_task(task_id: str) -> bool:
+    """请求取消任务（设置 cancel_requested 标志）。"""
+    updated = await update_link_clip_task(task_id, cancel_requested=True)
+    return updated is not None
+
+
 def mark_embedding_meta(kb_id: str, doc_ids: List[str], model: str, dim: int) -> None:
-    """Write back embeddingMeta = {model, dim, upserted: true} for the given
-    docs of one kb (no vector data)."""
+    """Write back embeddingMeta with {model, dim, upserted: true} for the given
+    docs of one kb (no vector data). Merged into the existing meta so
+    provenance fields (source/filename/images…) survive the marking."""
     kbs = load_or_seed_kbs()
     want = normalize_kb_id(kb_id)
     wanted = set(str(i) for i in doc_ids)
@@ -791,5 +1007,8 @@ def mark_embedding_meta(kb_id: str, doc_ids: List[str], model: str, dim: int) ->
         for d in kb["docs"]:
             if d["id"] in wanted:
                 d.pop("embedding", None)
-                d["embeddingMeta"] = {"model": model, "dim": int(dim), "upserted": True}
+                meta = d.get("embeddingMeta")
+                merged = dict(meta) if isinstance(meta, Mapping) else {}
+                merged.update({"model": model, "dim": int(dim), "upserted": True})
+                d["embeddingMeta"] = merged
     atomic_write_json(KB_FILE, {"kbs": kbs})

@@ -5,7 +5,7 @@ dist
 .git/*
 __pycache__/
 *.pyc
-.venv/*
+.venv
 *.o
 *.a
 /vendor
@@ -97,12 +97,17 @@ logs/
 node_modules/
 .pnp
 .pnp.js
+
 # Production build
 dist/
+dist_build/
 build/
 out/
 .next/
 .rsbuild/
+final_package
+*/release/
+
 # Testing
 coverage/
 *.lcov
@@ -165,11 +170,10 @@ Desktop.ini
 .coze-logs
 .codegraph/
 /data/
-# 本地模型权重（laya-multilingual 等，体积大，随项目目录本地存放不入库）
-/models/
-
 
 #AI-Agents
 AGENTS.md
 DESIGN.md
 SOP.md
+plan
+tests

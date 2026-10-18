@@ -4,7 +4,7 @@ Per-endpoint dispatch by ep["protocol"]; tolerant about /v1 suffix variants:
 whether an openai-protocol baseUrl already carries /v1 is decided by probing
 {base}/models first and retrying {base}/v1/models on 404 (brief rule).
 
-Timeouts (brief): embedding 20s, chat invoke 30s, rerank 15s.
+Timeouts (brief): embedding 120s（一批 + 冷启动加载模型），chat invoke 30s, rerank 15s.
 Connection/timeout errors raise; the pipeline catches and degrades.
 """
 
@@ -22,7 +22,10 @@ from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional, Sequence
 
 import httpx
 
-EMBED_TIMEOUT = 20.0
+EMBED_TIMEOUT = 120.0
+# 单次 embedding 请求的文本条数上限：本地 CPU 端点约 3~4s/篇，一批必须落在
+# EMBED_TIMEOUT 内（含首次加载模型的冷启动），否则整批一起超时、一篇都存不下。
+EMBED_BATCH_SIZE = 4
 CHAT_INVOKE_TIMEOUT = 30.0
 RERANK_TIMEOUT = 15.0
 

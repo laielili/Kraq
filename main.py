@@ -7,6 +7,7 @@ One-click starter for Kraq:
 """
 
 import os
+import shutil
 import sys
 import subprocess
 import time
@@ -43,10 +44,28 @@ frontend_proc = None
 
 def start_frontend():
     global frontend_proc
+    frontend_dir = Path(PROJECT_ROOT) / "frontend"
+    # 开发调试检查：确保 frontend/node_modules 存在（若缺失则先执行 pnpm install，使用完整路径避免 .venv 问题）
+    next_bin = frontend_dir / "node_modules" / ".bin" / "next"
+    if not next_bin.exists():
+        print("[kraq] 前端依赖缺失（frontend/node_modules 不存在），正在执行 pnpm install ...")
+        pnpm_executable = shutil.which('pnpm') or 'pnpm'
+        install_result = subprocess.run(
+            [pnpm_executable, "install", "--prefer-frozen-lockfile", "--prefer-offline", "--loglevel", "debug", "--reporter=append-only"],
+            cwd=str(frontend_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        print(f"[kraq] pnpm install 完成（退出码: {install_result.returncode}）")
+        if install_result.returncode != 0:
+            print(f"[kraq] 警告：pnpm install 失败，退出码 {install_result.returncode}，可能无法启动前端服务器")
     print("Starting Next.js dev server...")
     frontend_proc = subprocess.Popen(
         NEXTJS_CMD,
-        cwd=PROJECT_ROOT,
+        cwd=str(Path(PROJECT_ROOT) / "frontend"),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

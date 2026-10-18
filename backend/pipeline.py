@@ -10,15 +10,20 @@ Intent is BINARY (FAQ | OUT_OF_SCOPE): the stage LLM classifies (INTENT_SYSTEM;
 SEARCH merged into FAQ, CLARIFY is NOT an LLM label) -> rule fallback (search.
 classify_intent, same label set). FAQ flow: vector search first — if the top-1
 cosine score is below config clarifyThreshold, the CLARIFY branch runs (skip
-BM25/rerank; the already-retrieved results go to generation with a 澄清-goal
-prompt instead of an answer-goal; no hallucination validation); otherwise the
+BM25/rerank AND validation; generation is steered by the 澄清 goal alone as the
+system prompt, with only the numbered doc titles offered as material — the
+global answer-with-citations prompt and the [n]-requiring validator both pull a
+clarification back into answering); otherwise the
 full RAG chain runs (BM25 -> RRF -> rerank -> cited generation -> validation).
-OOS flow: no RAG — the refusal line plus an LLM free answer about the user's
-input (OOS goal prompt, no sources). Per-intent generation goals are
+OOS flow: no RAG — an LLM answer steered purely by the OOS goal prompt
+(先声明此类问题不在服务范围、再简短回应话题本身), streamed as delta* with a
+generate stage frame, no sources; generation failure yields error and stops
+(no canned refusal line is substituted). Per-intent generation goals are
 agent-level templates: config.json goalPrompt*, defaults in prompts/goal_*_default.md
 (mirror systemPrompt's null-follows-global convention).
 Vectors live in Chroma (chroma_store.query); kb.json stores no embeddings —
-embeddingMeta is a {model, dim, upserted} marker only.
+embeddingMeta carries provenance (source/filename/images) plus the
+{model, dim, upserted} marker written once a doc's vector is in Chroma.
 """
 
 from __future__ import annotations
@@ -26,11 +31,25 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional, Tuple
+from typing import (
+    Any,
+    AsyncGenerator,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Tuple,
+)
+
+import httpx
 
 from . import chroma_store
-from .common import PROJECT_ROOT, first_json_object
+from .common import PROJECT_ROOT, first_json_object, now_iso
 from .models_client import (
+    EMBED_BATCH_SIZE,
+    EMBED_TIMEOUT,
     chat_invoke,
     chat_stream,
     embed_texts,
@@ -78,9 +97,10 @@ _FALLBACK_GOALS: Dict[str, str] = {
         "不要给出答案本身，不要编造内容。"
     ),
     "OUT_OF_SCOPE": (
-        "用户的问题与本知识库的资料范围无关。请以知识库问答助手的身份，基于常识"
-        "友好地回应用户：简短回应话题本身，并说明此类问题不在本知识库的服务范围内、"
-        "建议咨询相关领域渠道。不要编造知识库内容，不要使用 [n] 引用编号。"
+        "用户的问题与本知识库的资料范围无关。请先用一句话说明此类问题不在本知识库"
+        "的服务范围内、建议咨询相关领域渠道；随后以知识库问答助手的身份，基于常识"
+        "简短回应话题本身。不要说「我无法回答」（你确实会给出回应），不要编造知识库"
+        "内容，不要使用 [n] 引用编号。"
     ),
 }
 
@@ -142,7 +162,6 @@ SYSTEM_PROMPT = (
 )
 RAG_USER_TEMPLATE = "编号资料：\n{contexts}\n\n用户问题：{question}\n\n请基于以上资料回答，并标注引用编号。"
 
-OUT_OF_SCOPE_ANSWER = "抱歉，该问题超出了本知识库的服务范围，我无法回答。"
 NO_DOCS_ANSWER = "知识库暂无文档，请先在左侧「档案柜」中添加资料后再提问。"
 GEN_NOT_CONFIGURED = "尚未配置生成模型，请点击右上角「检索与生成参数 → 配置模型」完成配置。"
 NO_RELEVANT_ANSWER = "知识库中暂未检索到与该问题相关的资料，无法作答。"
@@ -249,6 +268,7 @@ async def compute_missing_vectors(
     ep: Mapping[str, Any],
     model: str,
     force: bool = False,
+    on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, List[float]]:
     """ensureEmbeddings for one KB: load docs from kb.json, find those whose
     embeddingMeta is missing/mismatched, re-embed them, upsert vectors into
@@ -257,6 +277,8 @@ async def compute_missing_vectors(
     Caller thread must NOT hold DATA_FILE_LOCK while we await embed_texts —
     this fn is called outside the lock and only takes it for the writeback.
     `ep`/`model` are the KB's own per-KB embedding settings resolved upstream.
+    按 EMBED_BATCH_SIZE 分批：每批成功即 upsert + 落盘，进度对外可见，
+    后续批次失败也只丢那一批（本地端点整批超时曾导致一篇都没存下）。
     """
     missing: List[Mapping[str, Any]] = []
     for d in docs:
@@ -271,36 +293,105 @@ async def compute_missing_vectors(
     vectors: Dict[str, List[float]] = {}
     if not missing:
         return vectors
-    # dim known only after first successful response — rely on response len
-    texts = [_doc_text(d) for d in missing]
-    ids = [str(d["id"]) for d in missing]
-    resp = await embed_texts(ep, model, texts)
-    if not resp or len(resp) != len(texts):
-        raise ValueError("embedding 批量接口返回数量不匹配")
-    it = iter(resp)
-    dim = len(resp[0])
-    for did in ids:
-        vec = [float(x) for x in next(it)]
-        vectors[did] = vec
-    chroma_store.upsert(kb_id, ids, [vectors[did] for did in ids])
-    async with DATA_FILE_LOCK:
-        mark_embedding_meta(kb_id, ids, model, dim)
+    total = len(missing)
+    batch = max(1, int(EMBED_BATCH_SIZE))
+    for start in range(0, total, batch):
+        chunk = missing[start : start + batch]
+        texts = [_doc_text(d) for d in chunk]
+        ids = [str(d["id"]) for d in chunk]
+        resp = await embed_texts(ep, model, texts)
+        if not resp or len(resp) != len(texts):
+            raise ValueError("embedding 批量接口返回数量不匹配")
+        dim = len(resp[0])
+        for did, raw in zip(ids, resp):
+            vectors[did] = [float(x) for x in raw]
+        chroma_store.upsert(kb_id, ids, [vectors[did] for did in ids])
+        async with DATA_FILE_LOCK:
+            mark_embedding_meta(kb_id, ids, model, dim)
+        if on_progress is not None:
+            on_progress(len(vectors), total)
     return vectors
 
 
-async def force_reembed_kb(kb_id: str) -> Dict[str, Any]:
-    """「重新嵌入」入口：强制对本库全部文档重新计算向量并 upsert（无视
-    embeddingMeta 旧标记）。返回 {docs, upserted}，库不存在抛 KeyError。
-    不重切块——切块只作用于之后上传的新文件。"""
+# --------------------------------------------------------------------------
+# 「重新嵌入」后台任务：内存态进度表（进程重启即失效，届时由 sync_all_background 续算）
+# --------------------------------------------------------------------------
+_REEMBED_JOBS: Dict[str, Dict[str, Any]] = {}
+
+
+def get_reembed_job(kb_id: str) -> Optional[Dict[str, Any]]:
+    job = _REEMBED_JOBS.get(normalize_kb_id(kb_id))
+    return dict(job) if job else None
+
+
+def _describe_embed_error(err: Exception, done: int, total: int) -> str:
+    detail = str(err).strip() or type(err).__name__
+    if isinstance(err, httpx.TimeoutException):
+        return (
+            f"向量端点响应超时（单批 {EMBED_TIMEOUT:.0f}s），已嵌入 {done}/{total} 篇；"
+            "可在库配置中重试继续剩余部分"
+        )
+    if isinstance(err, httpx.HTTPStatusError):
+        return f"向量端点返回 HTTP {err.response.status_code}：{detail}"
+    return f"向量化失败（已嵌入 {done}/{total} 篇）：{detail}"
+
+
+def start_reembed_kb(kb_id: str) -> Dict[str, Any]:
+    """「重新嵌入」入口：登记任务并后台强制重嵌本库全部文档（无视
+    embeddingMeta 旧标记），立即返回 job 快照供前端轮询。
+    不重切块——切块只作用于之后上传的新文件。库不存在抛 KeyError，
+    未配置嵌入端点/模型抛 ValueError。
+    """
+    want = normalize_kb_id(kb_id)
     cfg = get_config()
-    ep, model = _resolve_kb_embedding(cfg, kb_id)
+    ep, model = _resolve_kb_embedding(cfg, want)
     if ep is None or not model:
         raise ValueError("该知识库未配置向量嵌入端点/模型，请先在库配置中完成设置")
-    docs = get_docs(kb_id)
+    running = _REEMBED_JOBS.get(want)
+    if running and running.get("status") == "running":
+        return dict(running)
+    docs = get_docs(want)
+    job: Dict[str, Any] = {
+        "kbId": want,
+        "model": model,
+        "status": "running",
+        "total": len(docs),
+        "done": 0,
+        "error": None,
+        "startedAt": now_iso(),
+    }
+    _REEMBED_JOBS[want] = job
     if not docs:
-        return {"docs": 0, "upserted": 0}
-    vectors = await compute_missing_vectors(kb_id, docs, ep, model, force=True)
-    return {"docs": len(docs), "upserted": len(vectors)}
+        job["status"] = "completed"
+        job["finishedAt"] = now_iso()
+        return dict(job)
+    asyncio.create_task(_run_reembed(want, docs, ep, model, job))
+    return dict(job)
+
+
+async def _run_reembed(
+    kb_id: str,
+    docs: List[Mapping[str, Any]],
+    ep: Mapping[str, Any],
+    model: str,
+    job: Dict[str, Any],
+) -> None:
+    def _progress(done: int, total: int) -> None:
+        job["done"] = done
+        job["total"] = total
+
+    try:
+        vectors = await compute_missing_vectors(
+            kb_id, docs, ep, model, force=True, on_progress=_progress
+        )
+        job["done"] = len(vectors)
+        job["status"] = "completed"
+        print(f"[reembed] kb={kb_id} 完成：重嵌 {len(vectors)}/{len(docs)} 篇", flush=True)
+    except Exception as e:
+        job["status"] = "failed"
+        job["error"] = _describe_embed_error(e, job["done"], job["total"])
+        print(f"[reembed] kb={kb_id} 失败：{e}", flush=True)
+    job["finishedAt"] = now_iso()
 
 
 async def sync_all_background() -> None:
@@ -347,33 +438,55 @@ async def sync_all_background() -> None:
 # --------------------------------------------------------------------------
 # vector retrieve via Chroma
 # --------------------------------------------------------------------------
-async def _vector_candidates(
+def _stale_docs(
+    docs: List[Mapping[str, Any]], model: str
+) -> List[Mapping[str, Any]]:
+    return [
+        d
+        for d in docs
+        if not (
+            isinstance(d.get("embeddingMeta"), Mapping)
+            and d["embeddingMeta"].get("model") == model
+            and d["embeddingMeta"].get("upserted")
+        )
+    ]
+
+
+async def ensure_embeddings(
+    kb_id: str,
+    docs: List[Mapping[str, Any]],
+    ep: Mapping[str, Any],
+    model: str,
+) -> List[Mapping[str, Any]]:
+    """补算缺失/过期向量并落盘（Chroma upsert + kb.json 标记），返回补算后的 docs。
+
+    这是问答链里唯一会写盘的检索步骤，所以从取证里拆出来由调用方显式执行——
+    spec §0.6-C7。返回值只在本次提问内生效：改造前 run_ask 的 docs 也不会被
+    补算结果替换，保持原语义以免动到 BM25 与 titles。
+    """
+    stale = _stale_docs(docs, model)
+    if not stale:
+        return docs
+    await compute_missing_vectors(kb_id, stale, ep, model)
+    return get_docs(kb_id)
+
+
+async def vector_probe(
     kb_id: str,
     cfg: Mapping[str, Any],
     docs: List[Mapping[str, Any]],
     question: str,
     top_n: int,
 ) -> Tuple[List[Dict[str, Any]], bool]:
-    """Returns (scored, vectorAvailable). Any embedding failure -> ([], False).
-    Missing-vector docs are lazily embedded here (same rules as sync_all)."""
+    """纯读取证：问题向量化 + Chroma 检索。任何失败 -> ([], False)，不 Mock。
+
+    返回 (scored, vectorAvailable)，只读不写。
+    """
     try:
         ep, model = _resolve_kb_embedding(cfg, kb_id)
         if ep is None or not model:
             return [], False
         doc_ids = {str(d["id"]) for d in docs}
-        stale = [
-            d
-            for d in docs
-            if not (
-                isinstance(d.get("embeddingMeta"), Mapping)
-                and d["embeddingMeta"].get("model") == model
-                and d["embeddingMeta"].get("upserted")
-            )
-        ]
-        if stale:
-            await compute_missing_vectors(kb_id, stale, ep, model)
-            docs = get_docs(kb_id)
-            doc_ids = {str(d["id"]) for d in docs}
         q_resp = await embed_texts(ep, model, [question])
         if not q_resp or not q_resp[0]:
             return [], False
@@ -386,6 +499,25 @@ async def _vector_candidates(
         return [], False
 
 
+async def vector_evidence(
+    kb_id: str,
+    cfg: Mapping[str, Any],
+    docs: List[Mapping[str, Any]],
+    question: str,
+    top_n: int,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """补算（写盘）+ 取证（只读）的组合点，语义与拆分前的 `_vector_candidates` 一致：
+    补算失败等同于向量不可用（([], False)），不阻断 BM25 那条腿。"""
+    ep, model = _resolve_kb_embedding(cfg, kb_id)
+    if ep is None or not model:
+        return [], False
+    try:
+        probe_docs = await ensure_embeddings(kb_id, docs, ep, model)
+    except Exception:
+        return [], False
+    return await vector_probe(kb_id, cfg, probe_docs, question, top_n)
+
+
 # --------------------------------------------------------------------------
 # generation prompt helpers
 # --------------------------------------------------------------------------
@@ -396,6 +528,16 @@ def build_contexts_block(reranked: List[Mapping[str, Any]], docs_by_id: Mapping[
         title = str(doc.get("title") or "")
         content = str(doc.get("content") or "")
         lines.append(f"[{i + 1}] {title}\n{content}")
+    return "\n".join(lines)
+
+
+def build_titles_block(reranked: List[Mapping[str, Any]], docs_by_id: Mapping[str, Mapping[str, Any]]) -> str:
+    """澄清用：只给编号 + 标题，不给正文——够模型列出「你可能想问 A/B/C」，
+    不够把正文抄成答案。"""
+    lines: List[str] = []
+    for i, r in enumerate(reranked):
+        doc = docs_by_id.get(str(r["id"])) or {}
+        lines.append(f"[{i + 1}] {str(doc.get('title') or '')}")
     return "\n".join(lines)
 
 
@@ -423,6 +565,9 @@ def rule_fallback_validate(answer: str, source_count: int, citations: List[int])
 # --------------------------------------------------------------------------
 # generation helpers (shared by FAQ-RAG / CLARIFY / OOS paths)
 # --------------------------------------------------------------------------
+ContextMode = Literal["full", "titles", "none"]
+
+
 async def _generate_stream(
     cfg: Mapping[str, Any],
     question: str,
@@ -434,22 +579,36 @@ async def _generate_stream(
     docs_by_id: Mapping[str, Mapping[str, Any]],
     goal: str,
     cite: bool,
+    context_mode: ContextMode = "full",
 ) -> AsyncGenerator[Dict[str, Any], None]:
-    """Stream the generation stage. System = agent-level global prompt
-    (config.systemPrompt, else prompts/system_kb_default.md) + the intent
-    goal. User = numbered contexts (when cite, else 候选资料 wording) +
-    question. Yields delta/thinking events and finally one internal
+    """Stream the generation stage. context_mode decides the whole assembly:
+
+    - "full"  (FAQ-RAG)：system = agent 级全局提示词 (config.systemPrompt,
+      else prompts/system_kb_default.md) + 本轮 goal；user = 编号资料全文 + 问题
+    - "titles"(CLARIFY)：system = goal 本身（全局提示词里"必须依据编号资料作答
+      并标注 [n]"会把澄清拽回答题，这里不拼）；user = 只给编号标题清单 + 问题
+    - "none"  (OUT_OF_SCOPE)：system = goal；user 不附任何资料
+
+    Yields delta/thinking events and finally one internal
     {"type": "done_answer", "answer"} frame (consumed by the caller, never
     sent to the client). Emits {"type": "error"} and stops on failure."""
-    sys_prompt = cfg.get("systemPrompt") or default_system_prompt()
-    contexts_block = build_contexts_block(contexts_docs, docs_by_id)
-    user_text = (
-        RAG_USER_TEMPLATE.format(contexts=contexts_block, question=question)
-        if cite
-        else f"候选资料（仅供判断，不要直接回答）：\n{contexts_block}\n\n用户消息：{question}"
-    )
+    if context_mode == "none":
+        sys_prompt = goal
+        user_text = f"用户消息：{question}"
+    elif context_mode == "titles":
+        sys_prompt = goal
+        titles_block = build_titles_block(contexts_docs, docs_by_id)
+        user_text = f"知识库中相关的资料标题：\n{titles_block}\n\n用户消息：{question}"
+    else:
+        contexts_block = build_contexts_block(contexts_docs, docs_by_id)
+        sys_prompt = f"{cfg.get('systemPrompt') or default_system_prompt()}\n\n本轮生成目标：{goal}"
+        user_text = (
+            RAG_USER_TEMPLATE.format(contexts=contexts_block, question=question)
+            if cite
+            else f"候选资料（仅供判断，不要直接回答）：\n{contexts_block}\n\n用户消息：{question}"
+        )
     messages = [
-        {"role": "system", "content": f"{sys_prompt}\n\n本轮生成目标：{goal}"},
+        {"role": "system", "content": sys_prompt},
         {"role": "user", "content": user_text},
     ]
     chunks: List[str] = []
@@ -467,36 +626,6 @@ async def _generate_stream(
         yield {"type": "error", "message": f"生成模型调用失败：{e}（请检查右上角「配置模型」与端点可达性）"}
         return
     yield {"type": "done_answer", "answer": "".join(chunks)}
-
-
-async def _oos_answer(
-    cfg: Mapping[str, Any],
-    question: str,
-    gen_ep: Mapping[str, Any],
-    gen_model: str,
-    session_id: str,
-) -> Optional[str]:
-    """OOS: refusal header + LLM free answer over the raw user input (no RAG).
-    None = generation failed (caller falls back to the fixed refusal line)."""
-    goal = intent_goal(cfg, "OUT_OF_SCOPE")
-    messages = [
-        {"role": "system", "content": goal},
-        {"role": "user", "content": str(question)},
-    ]
-    try:
-        parts: List[str] = []
-        async for content, _thinking in chat_stream(
-            gen_ep, gen_model, messages, float(cfg.get("temperature") or 0.7),
-            session_id=session_id,
-        ):
-            if content:
-                parts.append(content)
-        text = "".join(parts).strip()
-        if not text:
-            return None
-        return f"{OUT_OF_SCOPE_ANSWER}\n\n{text}"
-    except Exception:
-        return None
 
 
 async def _run_validation(
@@ -577,13 +706,30 @@ async def run_ask(
             yield {"type": "error", "message": GEN_NOT_CONFIGURED}
             return
 
-        # ---------------- OOS: 拒答头 + LLM 自由作答（不走 RAG）--------------
+        # ---------------- 超出范围：提示词驱动，先声明范围外再简短回应 --------
         if intent == "OUT_OF_SCOPE":
-            oos_answer = await _oos_answer(cfg, question, gen_ep, gen_model, session_id)
-            if oos_answer is None:
-                # 生成失败：退回纯固定拒答话术，不硬失败
-                oos_answer = OUT_OF_SCOPE_ANSWER
-            yield {"type": "done", "answer": oos_answer, "sources": [], "kbId": kb_id}
+            yield {"type": "stage", "stage": "generate", "data": {"model": gen_model}, "kbId": kb_id}
+            answer = ""
+            async for ev in _generate_stream(
+                cfg,
+                question,
+                gen_ep,
+                gen_model,
+                session_id,
+                contexts_docs=[],
+                docs_by_id={},
+                goal=intent_goal(cfg, "OUT_OF_SCOPE"),
+                cite=False,
+                context_mode="none",
+            ):
+                if ev.get("type") == "done_answer":
+                    answer = ev.get("answer") or ""
+                    break
+                yield ev
+            if not answer.strip():
+                # 生成失败（已发 error）或空流：不再退回固定话术，诚实到此为止
+                return
+            yield {"type": "done", "answer": answer.strip(), "sources": [], "kbId": kb_id}
             return
 
         if not docs:
@@ -604,13 +750,14 @@ async def run_ask(
 
         # ---------------- retrieve: vector-first gate -> BM25+RRF -----------
         candidate_k = _retrieve_top_k(cfg)
-        vector_list, vector_available = await _vector_candidates(
+        vector_list, vector_available = await vector_evidence(
             kb_id, cfg, docs, question, candidate_k
         )
         top1_score = float(vector_list[0]["score"]) if vector_list else 0.0
         threshold = float(cfg.get("clarifyThreshold") or 0.72)
-        # CLARIFY 分支：最高余弦分数低于阈值 → 跳过 BM25/rerank，拿已检索结果
-        # 进生成，目标引导为「澄清」；无向量服务时（0.0 < 阈值）同样触发。
+        # CLARIFY 闸门：向量 top-1 余弦低于阈值 → 澄清。此时 BM25 还没跑，
+        # 判据只有向量分。向量服务整体不可用（vector_available=False）时不澄清，
+        # 那是服务问题不是用户问题含糊，照走 BM25 单路检索。
         clarify = vector_available and top1_score < threshold
         docs_by_id = {str(d["id"]): d for d in docs}
 
@@ -619,8 +766,8 @@ async def run_ask(
             detail["top1Score"] = _round4(top1_score)
             detail["threshold"] = _round4(threshold)
             yield {"type": "stage", "stage": "intent", "data": detail, "kbId": kb_id}
-            # 澄清分支：跳过 BM25/rerank（不发这两阶段事件），但仍运行幻觉校验
-            # ——生成虽以澄清为目标，实测仍会带 [n] 引用，需要校验并支持悬浮溯源
+            # 澄清分支：跳过 BM25/rerank（不发这两阶段事件），也跳过校验——
+            # 校验器要求 [n] 引用，会把"只追问不作答"判成失败
             yield {"type": "stage", "stage": "generate", "data": {"model": gen_model}, "kbId": kb_id}
             answer = ""
             async for ev in _generate_stream(
@@ -633,6 +780,7 @@ async def run_ask(
                 docs_by_id=docs_by_id,
                 goal=intent_goal(cfg, "CLARIFY"),
                 cite=False,
+                context_mode="titles",
             ):
                 if ev.get("type") == "done_answer":
                     answer = ev.get("answer") or ""
@@ -642,10 +790,6 @@ async def run_ask(
                 # done_answer 缺席说明生成已 yield error 并终止，直接结束
                 return
             cited_docs = vector_list
-            # ---------------- validate（澄清输出同样校验 [n]）--------------
-            validation = await _run_validation(cfg, answer, cited_docs, docs_by_id)
-            if validation is not None:
-                yield {"type": "stage", "stage": "validate", "data": validation, "kbId": kb_id}
             sources = [
                 {
                     "id": str(r["id"]),

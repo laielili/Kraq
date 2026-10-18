@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import datetime as _dt
 from pathlib import Path
 from typing import Any, Dict
@@ -60,9 +61,33 @@ def now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
+class CancelledError(Exception):
+    """后台任务被用户取消。放在 common 是因为 link_extractor 也要抛它，
+    而 link_extractor 不能被 task_queue 反向 import（循环依赖）。"""
+
+
 def utf8(value: Any) -> str:
     """json.dumps with the settings every SSE/data frame in this project needs."""
     return json.dumps(value, ensure_ascii=False)
+
+
+_SNIFF_BYTES = 200_000
+
+
+def decode_bytes(body: bytes) -> str:
+    """按嗅探到的真实编码解码，回落 utf-8/ignore。
+
+    中文站点仍大量使用 GBK/GB2312，无条件 utf-8 会得到乱码正文。
+    """
+    import charset_normalizer
+
+    match = charset_normalizer.from_bytes(body[:_SNIFF_BYTES]).best()
+    if match is not None and match.encoding:
+        try:
+            return body.decode(match.encoding)
+        except (LookupError, UnicodeDecodeError):
+            pass
+    return body.decode("utf-8", "ignore")
 
 
 def atomic_write_json(path: Path, value: Any) -> None:
@@ -78,6 +103,53 @@ def atomic_write_json(path: Path, value: Any) -> None:
 def read_json_file(path: Path) -> Any:
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def json_object_after(text: str, marker: str) -> Dict[str, Any] | None:
+    """取 `window.__INITIAL_STATE__={…}` 这类嵌在 HTML 里的 JS 对象字面量。
+
+    与 first_json_object 的区别：那个是在自由文本里找第一个平衡 `{…}`，
+    这里必须以 marker 为锚点，并且要处理 JS 特有的两种非 JSON 写法。
+    解析失败返回 None，由调用方给业务文案（平台改版是常态，不该抛裸异常）。
+    """
+    idx = text.find(marker)
+    if idx < 0:
+        return None
+    start = text.find("{", idx)
+    if start < 0:
+        return None
+    depth, i, in_str, esc = 0, start, False, False
+    while i < len(text):
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        else:
+            if c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+        i += 1
+    if depth != 0:
+        return None
+    chunk = text[start : i + 1]
+    # undefined 只可能是值位置的裸标识符。裸替换会把正文/键名里的
+    # "undefined" 也换掉（参考实现踩过这个坑），所以限定在 : , [ 之后。
+    chunk = re.sub(r"([:,[])\s*undefined(?=[,}\]])", r"\1 null", chunk)
+    chunk = re.sub(r",\s*([}\]])", r"\1", chunk)  # 尾逗号
+    try:
+        parsed = json.loads(chunk)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def first_json_object(text: str) -> Dict[str, Any] | None:

@@ -9,7 +9,10 @@ Rules (from the brief):
   `overlap` characters carried between neighbouring pieces;
 - consecutive blank lines never produce empty blocks; the final leftover that
   is much smaller than a block merges into the previous block when it still
-  fits within maxChars.
+  fits within maxChars;
+- rejoining always restores separators (blank line between paragraphs, newline
+  between lines) — a markdown heading only stays a heading if it still starts
+  its own line after packing.
 
 Returns [{'text': str, 'length': int}, ...] in document order.
 """
@@ -37,12 +40,13 @@ def chunk_text(text: str, max_chars: int, overlap: int) -> List[Dict[str, object
 
     for section in _iter_sections(text):
         for para in _split_paragraphs(section):
+            para = para.strip("\n")  # section joins leave stray blank lines
             if not para.strip():
                 continue
             if len(para) > max_chars:
                 # flush everything before the oversized paragraph
                 if current:
-                    blocks.append({"text": "".join(current), "hardCut": False})
+                    blocks.append({"text": "\n\n".join(current), "hardCut": False})
                     current = []
                 pieces_and_flags = _hard_split(para, max_chars, overlap)
                 for i, p in enumerate(pieces_and_flags):
@@ -52,19 +56,23 @@ def chunk_text(text: str, max_chars: int, overlap: int) -> List[Dict[str, object
                     else:
                         blocks.append({"text": p, "hardCut": i > 0 or bool(current)})
                 continue
-            joined_len = sum(len(p) for p in current) + len(para)
+            joined_len = (
+                sum(len(p) for p in current)
+                + len(para)
+                + (2 * len(current) if current else 0)
+            )
             if current and joined_len <= max_chars:
                 current.append(para)
             elif not current:
                 current = [para]
             else:
-                blocks.append({"text": "".join(current), "hardCut": False})
+                blocks.append({"text": "\n\n".join(current), "hardCut": False})
                 current = [para]
         # section boundary: keep the current block open across sections unless
         # it is already over the limit — blocks pack paragraphs in order.
 
     if current:
-        blocks.append({"text": "".join(current), "hardCut": False})
+        blocks.append({"text": "\n\n".join(current), "hardCut": False})
 
     # merge a small final tail into the previous block when it fits
     merged: List[Dict[str, object]] = []
@@ -74,9 +82,9 @@ def chunk_text(text: str, max_chars: int, overlap: int) -> List[Dict[str, object
             merged
             and idx == len(blocks) - 1
             and len(txt) < int(max_chars * _MERGE_FRACTION)
-            and len(str(merged[-1]["text"])) + len(txt) <= max_chars
+            and len(str(merged[-1]["text"])) + 2 + len(txt) <= max_chars
         ):
-            merged[-1] = {"text": str(merged[-1]["text"]) + txt, "hardCut": False}
+            merged[-1] = {"text": str(merged[-1]["text"]) + "\n\n" + txt, "hardCut": False}
         else:
             merged.append(b)
 
@@ -113,12 +121,12 @@ def _iter_sections(text: str):
     section: List[str] = [lines[0]]
     for line in lines[1:]:
         if _HEADING_RE.match(line.strip()):
-            yield "".join(section)
+            yield "\n".join(section)
             section = [line]
         else:
             section.append(line)
     if section:
-        yield "".join(section)
+        yield "\n".join(section)
 
 
 def _split_paragraphs(section: str) -> List[str]:
@@ -126,5 +134,5 @@ def _split_paragraphs(section: str) -> List[str]:
 
 
 # Example (kept for manual sanity checks):
-#   chunk_text("a\n\nb", 600, 50)  -> 1 block  "ab"
+#   chunk_text("a\n\nb", 600, 50)  -> 1 block  "a\n\nb"
 #   chunk_text("X" * 1500, 600, 50)-> [600, 550, 350] via overlap stepping

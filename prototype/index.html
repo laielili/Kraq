@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kraq · 知识库智能问答 — 交互原型</title>
+<link rel="stylesheet" href="styles.css?v=13">
+</head>
+<body>
+<div class="app">
+  <div id="banner" class="banner hidden"></div>
+
+  <header class="hdr">
+    <div class="brand">
+      <span class="brand-mark" data-icon="book-open-text"></span>
+      <div class="brand-text">
+        <h1>Kraq · 知识库智能问答</h1>
+        <p>意图识别 · 混合检索 · 重排序 · 引用生成 · 幻觉校验</p>
+      </div>
+    </div>
+    <div class="hdr-actions">
+      <button id="btn-drawer-left" class="icon-btn only-narrow" aria-label="打开知识库">
+        <span data-icon="archive"></span>
+        <span id="clip-badge" class="count-badge hidden">0</span>
+      </button>
+      <button id="btn-drawer-right" class="icon-btn only-narrow-wide" aria-label="打开流程追溯">
+        <span data-icon="workflow"></span>
+      </button>
+      <div class="pop-anchor">
+        <button id="btn-params" class="icon-btn" aria-label="检索与生成参数" aria-expanded="false">
+          <span data-icon="settings2"></span>
+        </button>
+        <div id="params-pop" class="pop hidden" role="dialog" aria-label="检索与生成参数">
+          <button id="btn-open-models" class="btn outline sm serif block">配置模型</button>
+
+          <p class="pop-h">检索</p>
+          <div class="knob">
+            <div class="knob-row"><span>最高余弦分数置信阈值</span><b id="v-threshold">0.72</b></div>
+            <input id="s-threshold" type="range" min="0" max="1" step="0.02" value="0.72">
+          </div>
+          <div class="knob">
+            <div class="knob-row"><span>召回候选数</span><b id="v-topk">10</b></div>
+            <input id="s-topk" type="range" min="2" max="20" step="1" value="10">
+          </div>
+          <div class="knob">
+            <div class="knob-row"><span>BM25 权重</span><b id="v-bm25">0.40</b></div>
+            <input id="s-bm25" type="range" min="0" max="1" step="0.05" value="0.4">
+          </div>
+          <div class="knob">
+            <div class="knob-row"><span>向量检索权重</span><b id="v-vector">0.60</b></div>
+            <input id="s-vector" type="range" min="0" max="1" step="0.05" value="0.6">
+          </div>
+
+          <div class="pop-div"></div>
+          <p class="pop-h">模型</p>
+          <div class="knob">
+            <div class="knob-row"><span>生成温度</span><b id="v-temp">0.7</b></div>
+            <input id="s-temp" type="range" min="0" max="1" step="0.1" value="0.7">
+          </div>
+          <div class="knob">
+            <div class="knob-row"><span>引用资料条数</span><b id="v-topn">5</b></div>
+            <input id="s-topn" type="range" min="1" max="10" step="1" value="5">
+          </div>
+          <div class="knob-row plain">
+            <span>引用与幻觉校验</span>
+            <button id="sw-validate" class="switch" role="switch" aria-checked="true" aria-label="引用与幻觉校验"><i></i></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="work">
+    <aside id="col-left" class="col col-left">
+      <div class="kb-head">
+        <button id="btn-kb-switch" class="btn outline sm block" aria-label="切换知识库">
+          <span class="kb-ico" data-icon="book"></span>
+          <span id="kb-name-label" class="truncate">默认知识库</span>
+          <span data-icon="chevron-down"></span>
+        </button>
+      </div>
+      <div class="kb-body">
+        <ul id="doc-list" class="doc-list"></ul>
+      </div>
+      <div class="kb-foot">
+        <form id="clip-form" class="clip-form hidden">
+          <input id="clip-url" class="input sm" placeholder="粘贴链接（小红书图文 / 网页，可省 https://）" aria-label="要转存的链接">
+          <button type="submit" class="btn outline sm sq" aria-label="存入档案柜" title="存入档案柜">
+            <span data-icon="arrow-down-to-line"></span>
+          </button>
+        </form>
+        <div class="kb-actions">
+          <input id="file-input" type="file" class="hidden" accept=".txt,.md,.pdf,.docx,.pptx,.xlsx,.epub,.html,.csv">
+          <button id="btn-upload" class="btn outline sm grow"><span data-icon="folder-open"></span>上传档案</button>
+          <button id="btn-clip-toggle" class="btn outline sm sq" aria-label="链接转存" aria-expanded="false" title="链接转存">
+            <span data-icon="link"></span>
+          </button>
+          <button id="btn-queue" class="btn outline sm queue hidden" aria-label="打开转存队列">队列 <b id="queue-count">0</b></button>
+        </div>
+        <p id="kb-error" class="err hidden"></p>
+      </div>
+    </aside>
+
+    <main class="col col-main">
+      <div id="chat-scroll" class="chat-scroll">
+        <div id="chat-list" class="chat-list"></div>
+      </div>
+      <div class="composer">
+        <div class="demo-strip">
+          <div id="demo-chips" class="chips"></div>
+          <button id="btn-reset" class="btn ghost xs">清空对话</button>
+        </div>
+        <div class="composer-inner">
+          <textarea id="ask-input" rows="1" placeholder="输入问题，Enter 发送，Shift + Enter 换行"></textarea>
+          <button id="btn-send" class="btn primary sq" aria-label="发送"><span data-icon="send"></span></button>
+        </div>
+      </div>
+    </main>
+
+    <aside id="col-right" class="col col-right">
+      <div class="trace-head">
+        <div class="trace-title">
+          <h2>流程追溯</h2>
+          <p>每一次回答的检索与校验过程</p>
+        </div>
+        <button id="btn-collapse" class="icon-btn xs" aria-label="收起流程追溯"><span data-icon="panel-right"></span></button>
+      </div>
+      <div id="trace-body" class="trace-body"></div>
+    </aside>
+  </div>
+</div>
+
+<button id="btn-expand" class="expand-tab hidden" aria-label="展开流程追溯" title="展开流程追溯">
+  <span data-icon="workflow"></span>
+</button>
+
+<div id="backdrop" class="backdrop hidden"></div>
+
+<!-- 笔记阅读窗 -->
+<div id="ov-reader" class="overlay hidden">
+  <div class="sheet reader" role="dialog" aria-label="档案原文">
+    <div class="sheet-head">
+      <h3 id="reader-title" class="serif"></h3>
+      <p id="reader-meta" class="mono-10"></p>
+      <button class="icon-btn xs close" data-close aria-label="关闭"><span data-icon="x"></span></button>
+    </div>
+    <div class="sheet-scroll"><p id="reader-content" class="reader-content"></p></div>
+  </div>
+</div>
+
+<!-- 删除确认 -->
+<div id="ov-delete" class="overlay hidden">
+  <div class="sheet confirm" role="alertdialog" aria-label="删除确认">
+    <h3 id="del-title" class="serif"></h3>
+    <p class="muted-sm">该笔记将从当前知识库的档案柜中移除，向量记录一并删除；此操作不可撤销。</p>
+    <div class="sheet-foot">
+      <button id="del-cancel" class="btn danger xs" data-close>取消</button>
+      <button id="del-confirm" class="btn primary xs">确认删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 知识库管理 -->
+<div id="ov-kbs" class="overlay hidden">
+  <div class="sheet wide" role="dialog" aria-label="知识库管理">
+    <div class="sheet-head">
+      <h3 class="serif">知识库</h3>
+      <p class="mono-10">选择、新建与维护档案柜</p>
+      <button class="icon-btn xs close" data-close aria-label="关闭"><span data-icon="x"></span></button>
+    </div>
+    <div class="sheet-scroll">
+      <ul id="kb-list" class="kb-list"></ul>
+      <div class="form-block">
+        <p class="pop-h">新建知识库</p>
+        <div class="field"><label class="lbl" for="new-kb-name">名称</label><input id="new-kb-name" class="input" placeholder="如：竞品调研"></div>
+        <div class="field"><label class="lbl" for="new-kb-desc">简介（意图路由速览）</label><input id="new-kb-desc" class="input" placeholder="留空未填"></div>
+        <div class="field"><label class="lbl" for="new-kb-sug">示例问题（空态快捷提问，一行一条，最多 4 条）</label><textarea id="new-kb-sug" class="input area" rows="3" placeholder="留空不显示"></textarea></div>
+        <div class="field-row">
+          <div class="field"><label class="lbl" for="new-kb-emb">嵌入模型</label><select id="new-kb-emb" class="input"></select></div>
+          <div class="field"><label class="lbl" for="new-kb-max">切块上限（字）</label><input id="new-kb-max" class="input" type="number" value="600" min="120" max="4000" step="20"></div>
+          <div class="field"><label class="lbl" for="new-kb-overlap">重叠（字）</label><input id="new-kb-overlap" class="input" type="number" value="80" min="0" max="800" step="10"></div>
+        </div>
+        <button id="btn-create-kb" class="btn primary sm">新建并切换</button>
+      </div>
+      <div id="kb-form-block" class="form-block hidden">
+        <p class="pop-h">编辑「<span id="kb-form-name"></span>」</p>
+        <div class="field"><label class="lbl" for="kb-edit-name">名称</label><input id="kb-edit-name" class="input"></div>
+        <div class="field"><label class="lbl" for="kb-edit-desc">简介</label><input id="kb-edit-desc" class="input"></div>
+        <div class="field"><label class="lbl" for="kb-edit-sug">示例问题</label><textarea id="kb-edit-sug" class="input area" rows="3"></textarea></div>
+        <div class="field-row">
+          <div class="field"><label class="lbl" for="kb-edit-emb">嵌入模型</label><select id="kb-edit-emb" class="input"></select></div>
+          <div class="field"><label class="lbl" for="kb-edit-max">切块上限（字）</label><input id="kb-edit-max" class="input" type="number" min="120" max="4000" step="20"></div>
+          <div class="field"><label class="lbl" for="kb-edit-overlap">重叠（字）</label><input id="kb-edit-overlap" class="input" type="number" min="0" max="800" step="10"></div>
+        </div>
+        <div class="sheet-foot left">
+          <button id="btn-save-kb" class="btn primary sm">保存</button>
+          <button id="btn-reembed-kb" class="btn outline sm">重新嵌入</button>
+          <button id="btn-delete-kb" class="btn danger sm">删除知识库</button>
+        </div>
+        <p id="reembed-status" class="mono-10 hidden"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 配置模型 -->
+<div id="ov-models" class="overlay hidden">
+  <div class="sheet wide" role="dialog" aria-label="配置模型">
+    <div class="sheet-head">
+      <h3 class="serif">配置模型</h3>
+      <p class="mono-10">端点清单由后端实时探测（原型内为本地表）</p>
+      <button class="icon-btn xs close" data-close aria-label="关闭"><span data-icon="x"></span></button>
+    </div>
+    <div class="sheet-scroll">
+      <p class="pop-h">服务端点</p>
+      <ul id="ep-list" class="ep-list"></ul>
+      <div class="form-block">
+        <p class="pop-h"><span id="ep-form-title">新增端点</span></p>
+        <div class="field-row">
+          <div class="field"><label class="lbl" for="ep-name">名称</label><input id="ep-name" class="input" placeholder="如：Ollama"></div>
+          <div class="field"><label class="lbl" for="ep-protocol">协议</label>
+            <select id="ep-protocol" class="input"><option value="ollama">ollama</option><option value="openai">openai</option><option value="llamacpp">llamacpp</option></select>
+          </div>
+        </div>
+        <div class="field"><label class="lbl" for="ep-base">Base URL</label><input id="ep-base" class="input" placeholder="http://127.0.0.1:11434"></div>
+        <div class="field"><label class="lbl" for="ep-key">API Key</label><input id="ep-key" class="input" type="password" placeholder="留空不修改"></div>
+        <p id="ep-status" class="mono-10 hidden"></p>
+        <div class="sheet-foot left">
+          <button id="btn-save-ep" class="btn primary sm">保存端点</button>
+          <button id="btn-cancel-ep" class="btn ghost sm">取消编辑</button>
+        </div>
+      </div>
+
+      <p class="pop-h">流程选型</p>
+      <div id="stage-rows" class="stage-rows"></div>
+      <div class="knob">
+        <div class="knob-row"><span>生成温度</span><b id="v-temp2">0.7</b></div>
+        <input id="s-temp2" type="range" min="0" max="1" step="0.1" value="0.7">
+      </div>
+      <button id="btn-open-prompts" class="btn outline sm">全局提示词</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全局提示词 -->
+<div id="ov-prompts" class="overlay hidden">
+  <div class="sheet" role="dialog" aria-label="全局提示词">
+    <div class="sheet-head">
+      <h3 class="serif">全局提示词</h3>
+      <p class="mono-10">知识问答 Agent 的系统提示词与三条分支目标</p>
+      <button class="icon-btn xs close" data-close aria-label="关闭"><span data-icon="x"></span></button>
+    </div>
+    <div class="sheet-scroll">
+      <div class="field"><label class="lbl" for="prompt-main">系统提示词</label><textarea id="prompt-main" class="input area tall" rows="8"></textarea></div>
+      <p class="pop-h">分支目标（只读样本）</p>
+      <div id="prompt-goals"></div>
+    </div>
+    <div class="sheet-foot right"><button id="btn-save-prompt" class="btn primary sm">保存</button></div>
+  </div>
+</div>
+
+<!-- 转存队列 -->
+<div id="ov-queue" class="overlay hidden">
+  <div class="sheet queue-sheet" role="dialog" aria-label="转存队列">
+    <div class="sheet-head">
+      <h3 class="serif">转存队列</h3>
+      <p id="queue-meta" class="mono-10"></p>
+      <button class="icon-btn xs close" data-close aria-label="关闭"><span data-icon="x"></span></button>
+    </div>
+    <div class="sheet-scroll" id="queue-list"></div>
+    <div class="sheet-foot note">关闭不影响后台转存 · 向量在下次检索或启动时补齐</div>
+  </div>
+</div>
+
+<!-- 引用原文浮卡 -->
+<div id="cite-hover" class="hover-card hidden" role="tooltip"></div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="icons.js?v=13"></script>
+<script src="data.js?v=13"></script>
+<script src="engine.js?v=13"></script>
+<script src="app.js?v=13"></script>
+</body>
+</html>

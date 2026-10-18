@@ -18,7 +18,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from . import chroma_store
 from .chunker import chunk_text
 from .models_client import list_models
-from .pipeline import force_reembed_kb, run_ask, sync_all_background
+from .orchestrator.runner import astream_frames
+from .pipeline import get_reembed_job, start_reembed_kb, sync_all_background
 from .store import (
     DATA_FILE_LOCK,
     DEFAULT_KB_ID,
@@ -43,7 +44,8 @@ from .store import (
     update_config,
     update_kb_settings,
 )
-from .common import now_iso
+from .common import now_iso, decode_bytes
+from .document_converter import convert_bytes
 
 app = FastAPI(title="Kraq Backend", version="0.3.0")
 
@@ -55,6 +57,18 @@ app.add_middleware(
 )
 
 MAX_UPLOAD_CHARS = 2_000_000
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
+# 直解文本，不经 markitdown
+PASSTHROUGH_EXTS = (".txt", ".md")
+# 存档网页走 trafilatura 正文链（markitdown 的 HTML 转换是整页结构转换，实测会把
+# <nav> 一类页面外壳一起入库）
+HTML_EXTS = (".html", ".htm")
+# 其余走 document_converter。刻意排除 .zip（markitdown 会展开包内每个文件，
+# 输出体量无上限）与 .ppt/.doc/.xls 旧格式（无对应转换器，收下只会解析失败）。
+ALLOWED_EXTS = PASSTHROUGH_EXTS + HTML_EXTS + (
+    ".pdf", ".docx", ".pptx", ".xlsx", ".epub", ".csv", ".json", ".xml",
+)
 
 _sync_task: asyncio.Task | None = None
 
@@ -69,6 +83,14 @@ def _resolve_kb(kb_id: str | None) -> str:
     if any(kb["kbId"] == want for kb in get_kbs()):
         return want
     return DEFAULT_KB_ID
+
+
+async def _to_markdown(raw: bytes, ext: str, filename: str, mimetype: str | None) -> str:
+    # 转换是 CPU 活（PDF 尤其重），挪出事件循环，别卡住 SSE 问答
+    converted = await asyncio.to_thread(
+        convert_bytes, raw, extension=ext, mimetype=mimetype or None, filename=filename
+    )
+    return converted["markdown"]
 
 
 @app.on_event("startup")
@@ -244,17 +266,15 @@ async def kb_settings_get(kb_id: str):
 
 @app.put("/api/kbs/{kb_id}/settings")
 async def kb_settings_put(kb_id: str, request: Request):
-    """per-KB 嵌入端点/模型、切块参数的局部更新（改名走 PUT /api/kbs/{kb_id}）。"""
+    """per-KB 嵌入端点/模型、切块参数、简介、示例问题的局部更新（改名走 PUT /api/kbs/{kb_id}）。"""
     try:
         body = await request.json()
     except Exception:
         return _err(400, "请求体不是合法 JSON")
-    if not isinstance(body, Mapping) or (
-        "embedding" not in body
-        and "chunking" not in body
-        and "description" not in body
+    if not isinstance(body, Mapping) or not (
+        {"embedding", "chunking", "description", "suggestions"} & set(body)
     ):
-        return _err(400, "至少提供 embedding、chunking 或 description 之一")
+        return _err(400, "至少提供 embedding、chunking、description 或 suggestions 之一")
     embedding = body.get("embedding") if isinstance(body.get("embedding"), Mapping) else {}
     chunking = body.get("chunking") if isinstance(body.get("chunking"), Mapping) else {}
     try:
@@ -281,6 +301,8 @@ async def kb_settings_put(kb_id: str, request: Request):
                 settings_patch["chunking"] = chunking
             if "description" in body:
                 settings_patch["description"] = body.get("description")
+            if "suggestions" in body:
+                settings_patch["suggestions"] = body.get("suggestions")
             updated = update_kb_settings(kb_id, settings_patch)
         return JSONResponse({
             "kbId": updated["kbId"],
@@ -288,6 +310,7 @@ async def kb_settings_put(kb_id: str, request: Request):
             "embedding": updated["embedding"],
             "chunking": updated["chunking"],
             "description": updated.get("description") or "",
+            "suggestions": list(updated.get("suggestions") or []),
         })
     except Exception as e:
         return _err(500, f"保存知识库配置失败：{e}")
@@ -295,20 +318,32 @@ async def kb_settings_put(kb_id: str, request: Request):
 
 @app.post("/api/kbs/{kb_id}/reembed")
 async def kb_reembed(kb_id: str):
-    """「重新嵌入」：强制对本库全部文档重算向量并 upsert。后台执行，立即返回。"""
+    """「重新嵌入」：强制对本库全部文档重算向量并 upsert。后台分批执行，
+    立即返回任务快照（{status,total,done,error}），进度由 GET 同路径轮询。"""
     want = normalize_kb_id(kb_id)
     if not any(kb["kbId"] == want for kb in get_kbs()):
         return _err(404, f"知识库不存在：{kb_id}")
+    try:
+        job = start_reembed_kb(want)
+    except Exception as e:
+        return _err(400, str(e) or "重新嵌入启动失败")
+    return JSONResponse(job)
 
-    async def _run() -> None:
-        try:
-            report = await force_reembed_kb(want)
-            print(f"[reembed] kb={want} 完成：{report}", flush=True)
-        except Exception as e:
-            print(f"[reembed] kb={want} 失败：{e}", flush=True)
 
-    asyncio.create_task(_run())
-    return JSONResponse({"ok": True, "accepted": True, "kbId": want})
+@app.get("/api/kbs/{kb_id}/reembed")
+async def kb_reembed_status(kb_id: str):
+    """最近一次「重新嵌入」任务的进度/终态；无记录时返回 idle 快照。"""
+    want = normalize_kb_id(kb_id)
+    job = get_reembed_job(want)
+    if job is None:
+        return JSONResponse({
+            "kbId": want,
+            "status": "idle",
+            "total": 0,
+            "done": 0,
+            "error": None,
+        })
+    return JSONResponse(job)
 
 
 @app.get("/api/agent/prompt")
@@ -397,25 +432,6 @@ async def kb_get(request: Request):
         return _err(500, f"读取知识库失败：{e}")
 
 
-@app.post("/api/kb")
-async def kb_post(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        return _err(400, "请求体不是合法 JSON")
-    content = str(body.get("content") or "").strip()
-    title = str(body.get("title") or "").strip() or "未命名资料"
-    if not content:
-        return _err(400, "内容不能为空")
-    kb_id = _resolve_kb(body.get("kbId"))
-    try:
-        async with DATA_FILE_LOCK:
-            doc = add_doc(kb_id, title, content)
-        return JSONResponse({"docs": [_doc_meta(doc)], "kbId": kb_id})
-    except Exception as e:
-        return _err(500, f"添加资料失败：{e}")
-
-
 @app.delete("/api/kb")
 async def kb_delete(request: Request):
     doc_id = request.query_params.get("id") or ""
@@ -436,27 +452,58 @@ async def kb_delete(request: Request):
 
 @app.post("/api/kb/upload")
 async def kb_upload(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        return _err(400, "请求体不是合法 JSON")
-    filename = str(body.get("filename") or "")
-    content = str(body.get("content") or "")
-    title_base = str(body.get("title") or "").strip() or filename
+    """上传档案（multipart/form-data：file 必填，kbId / title 可选）。
 
-    allow_exts = (".txt", ".md")
+    txt/md 直解，其余格式经 document_converter 转 Markdown 后切块入库。
+    """
+    try:
+        form = await request.form()
+    except Exception:
+        return _err(400, "上传请求格式错误：需 multipart/form-data 且包含 file 字段")
+
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        return _err(400, "上传请求格式错误：需 multipart/form-data 且包含 file 字段")
+
+    filename = str(upload.filename or "").strip()
+    title_base = str(form.get("title") or "").strip() or filename.rsplit(".", 1)[0]
+    kb_id = _resolve_kb(str(form.get("kbId") or "").strip())
+
     ext = "." + filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
-    if ext not in allow_exts:
-        return _err(400, "仅支持 txt / md 文件")
-    if not content.strip():
+    if ext not in ALLOWED_EXTS:
+        return _err(
+            400,
+            f"不支持该文件类型：{ext or '未知'}；支持 " + "、".join(e[1:] for e in ALLOWED_EXTS),
+        )
+
+    raw = await upload.read()
+    if len(raw) > MAX_UPLOAD_BYTES:
+        return _err(400, "文件超出 20MB 上限")
+    if not raw.strip():
         return _err(400, "文件内容为空")
-    if len(content) > MAX_UPLOAD_CHARS:
-        return _err(400, "文件内容超出 2MB 限制")
-    kb_id = _resolve_kb(body.get("kbId"))
+
+    try:
+        if ext in PASSTHROUGH_EXTS:
+            content = decode_bytes(raw)
+            if len(content) > MAX_UPLOAD_CHARS:
+                return _err(400, "文件内容超出 2M 字符限制")
+        elif ext in HTML_EXTS:
+            from .link_extractor import extract_html_article
+
+            try:
+                content = (await asyncio.to_thread(extract_html_article, raw, ""))["content"]
+            except Exception:
+                # 正文识别不出来的存档页（全是 div 之类）回落整页转换
+                content = await _to_markdown(raw, ext, filename, None)
+        else:
+            content = await _to_markdown(
+                raw, ext, filename, getattr(upload, "content_type", None)
+            )
+    except Exception as e:
+        return _err(400, str(e) or "文件解析失败")
 
     try:
         async with DATA_FILE_LOCK:
-            cfg = get_config()
             # per-KB 切块参数：读本库 chunking（不再用全局）
             settings = get_kb_settings(kb_id)
             chunking = settings.get("chunking") or {}
@@ -464,12 +511,13 @@ async def kb_upload(request: Request):
             overlap = int(chunking.get("overlap") or 50)
             pieces = chunk_text(content, max_chars, overlap)
             now = now_iso()
+            meta = {"source": "upload", "filename": filename, "format": ext[1:]}
             new_docs = [
                 {
                     "id": new_doc_id(),
                     "title": f"{title_base} · 第{i + 1}块",
                     "content": str(p["text"]),
-                    "embeddingMeta": None,
+                    "embeddingMeta": {"upserted": False, **meta},
                     "createdAt": now,
                 }
                 for i, p in enumerate(pieces)
@@ -478,6 +526,156 @@ async def kb_upload(request: Request):
         return JSONResponse({"docs": [_doc_meta(d) for d in created], "kbId": kb_id})
     except Exception as e:
         return _err(500, f"文件切块入库失败：{e}")
+
+
+@app.post("/api/link-clip")
+async def link_clip(request: Request):
+    """链接剪藏端点：接收 URL → 调用内嵌提取器 → 直接入库（无需写 .md 文件）"""
+    try:
+        body = await request.json()
+    except Exception:
+        return _err(400, "请求体不是合法 JSON")
+    url = str(body.get("url") or "").strip()
+    kb_id = _resolve_kb(str(body.get("kbId") or "").strip() or "default")
+    if not url:
+        return _err(400, "缺少 url 字段")
+    from .link_extractor import extract_content, normalize_clip_url
+    try:
+        url = normalize_clip_url(url)
+    except Exception as e:
+        return _err(400, str(e))
+
+    # 调用内嵌提取器（直接返回结构化内容，无需写 .md 文件）
+    # 必须进线程池：抓取 + 解析是阻塞活，留在事件循环里会卡住整个后端（SSE 问答一起挂）
+    try:
+        extracted = await asyncio.to_thread(extract_content, url)
+    except Exception as e:
+        return _err(500, f"链接内容提取失败：{e}")
+
+    title = extracted.get("title") or url[:50]
+    content_text = extracted.get("content") or ""
+    if not content_text:
+        return _err(500, "提取内容为空")
+
+    # 入库：使用与 upload 相同的 chunking 逻辑
+    # 统一入库格式：仅存内容，标题留待后续 LLM 生成；提取的元数据存入 embeddingMeta 供后续使用
+    async with DATA_FILE_LOCK:
+        settings = get_kb_settings(kb_id)
+        chunking = settings.get("chunking") or {}
+        max_chars = int(chunking.get("maxChars") or 600)
+        overlap = int(chunking.get("overlap") or 50)
+        pieces = chunk_text(str(content_text), max_chars, overlap)
+        now = now_iso()
+        # 提取的元数据，供后续 LLM 生成标题或其他用途
+        extracted_meta = {
+            "source_url": url,
+            "extracted_title": extracted.get("title"),
+            "author": extracted.get("author"),
+            "date": extracted.get("date"),
+            "images": extracted.get("images", []),
+            "platform": extracted.get("platform", "web"),
+            "format": extracted.get("format", ""),
+        }
+        new_docs = [
+            {
+                "id": new_doc_id(),
+                "title": f"片段 {i + 1}",  # 占位标题，后续由 LLM 生成
+                "content": str(p["text"]),
+                "embeddingMeta": {"upserted": False, "source": "link-clip", **extracted_meta},
+                "createdAt": now,
+            }
+            for i, p in enumerate(pieces)
+        ]
+        created = add_docs_batch(kb_id, new_docs)
+    return JSONResponse({
+        "docs": [_doc_meta(d) for d in created],
+        "kbId": kb_id,
+        "url": url,
+        "title": extracted.get("title"),
+        "platform": extracted.get("platform", "web"),
+    })
+
+
+# ---------------------------------------------------------------------------
+# link-clip async (异步任务模式)
+# ---------------------------------------------------------------------------
+from .task_queue import get_task_queue
+from .store import (
+    create_link_clip_task,
+    get_link_clip_task,
+    list_link_clip_tasks,
+    update_link_clip_task,
+    request_cancel_link_clip_task,
+    reclaim_interrupted_tasks,
+    TERMINAL_STATUSES,
+)
+
+@app.on_event("startup")
+async def _startup_task_queue():
+    """启动时回收上个进程遗留的任务，再拉起 Worker。
+
+    执行状态（队列/协程/线程）不跨进程，遗留的 pending/running 若不标掉，
+    前端会一直轮询那些永远不会推进的记录。
+    """
+    reclaimed = await reclaim_interrupted_tasks()
+    if reclaimed:
+        print(f"  · 回收上个进程遗留的转存任务：{reclaimed} 条")
+    await get_task_queue().start()
+
+
+@app.post("/api/link-clip/async")
+async def link_clip_async(request: Request):
+    """异步提交链接剪藏任务：即时返回 task_id。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return _err(400, "请求体不是合法 JSON")
+    url = str(body.get("url") or "").strip()
+    kb_id = _resolve_kb(str(body.get("kbId") or "").strip() or "default")
+    if not url:
+        return _err(400, "缺少 url 字段")
+    # 归一化后再建任务：tasks.json 里存过整串分享文案，队列弹窗的 host 会显示成垃圾
+    from .link_extractor import normalize_clip_url
+    try:
+        url = normalize_clip_url(url)
+    except Exception as e:
+        return _err(400, str(e))
+
+    queue = get_task_queue()
+    task_id = await queue.submit(kb_id, url)
+    return JSONResponse({"task_id": task_id, "status": "pending", "url": url})
+
+
+@app.get("/api/link-clip/tasks/{task_id}")
+async def link_clip_task_status(task_id: str):
+    """查询任务状态/进度。"""
+    task = await get_link_clip_task(task_id)
+    if task is None:
+        return _err(404, "任务不存在")
+    return JSONResponse(task.to_dict())
+
+
+@app.get("/api/link-clip/tasks")
+async def link_clip_tasks_list(request: Request):
+    """列出任务（可按 kb_id 过滤；activeOnly=true 时只给 pending/running）。"""
+    kb_id = request.query_params.get("kbId")
+    active_only = (request.query_params.get("activeOnly") or "").lower() in ("1", "true", "yes")
+    tasks = await list_link_clip_tasks(kb_id)
+    if active_only:
+        tasks = [t for t in tasks if t.status not in TERMINAL_STATUSES]
+    return JSONResponse({"tasks": [t.to_dict() for t in tasks]})
+
+
+@app.post("/api/link-clip/tasks/{task_id}/cancel")
+async def link_clip_task_cancel(task_id: str):
+    """请求取消任务（终态任务不可取消）。"""
+    task = await get_link_clip_task(task_id)
+    if task is None:
+        return _err(404, "任务不存在")
+    if task.status in TERMINAL_STATUSES:
+        return _err(409, "任务已结束")
+    await request_cancel_link_clip_task(task_id)
+    return JSONResponse({"ok": True})
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +703,7 @@ async def ask(request: Request):
 
     async def event_stream():
         try:
-            async for ev in run_ask(question, kb_id, session_id=session_id):
+            async for ev in astream_frames(question, kb_id, session_id=session_id):
                 yield _sse_frame(ev)
         except Exception as e:
             yield _sse_frame({"type": "error", "message": f"服务异常：{e}"})

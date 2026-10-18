@@ -115,6 +115,9 @@ backend/                 # FastAPI 后端（RAG 心脏）
   store.py               # kb.json/config.json 存储：asyncio锁 + 原子写 + 版本迁移
   models_client.py       # ollama/openai/llamacpp 三协议 + llama.cpp rerank 服务自动拉起
   chunker.py             # 上传文件的标题/段落感知切块
+  link_extractor.py      # 链接转存：抓取（浏览器 UA + 登录态兜底）→ 按 content-type 分发
+  document_converter.py  # 非 HTML 输入 → Markdown（markitdown 薄封装，只喂 bytes）
+  task_queue.py          # 转存异步任务队列（进度/终态写 data/tasks.json）
   seed_docs.py           # 12 条中文种子知识（首访自动入库）
   tokenizer.py           # 中英混合分词（CJK 单字+二元组 + 词级）
 src/                     # Next.js 前端
@@ -138,7 +141,9 @@ data/                    # 运行时状态（gitignore）；删掉即完全重�
 | `GET/POST /api/kbs`、`PUT/DELETE /api/kbs` | 知识库增删改查（default 库不可删；删库连带清 Chroma collection） |
 | `GET/PUT /api/agent/prompt` | 知识问答 Agent 的全局系统提示词（空 = 回落全局默认） |
 | `GET/POST/DELETE /api/kb` | 当前库文档列表/添加/删除（均带 `kbId`，缺省回落 `default`） |
-| `POST /api/kb/upload` | 上传 txt/md（≤2M 字符）→ 自动切块入库 |
+| `POST /api/kb/upload` | multipart 上传档案（`file` + `kbId`/`title` 可选）：txt/md/html/htm/pdf/docx/pptx/xlsx/epub/csv/json/xml，≤20MB → 自动切块入库 |
+| `POST /api/link-clip` | 链接转存（同步）：抓取 → HTML 走 trafilatura 正文、其余走 markitdown → 切块入库 |
+| `POST /api/link-clip/async` | 链接转存（异步），返回 `task_id`；`GET /api/link-clip/tasks/{id}` 查进度，`POST .../cancel` 请求取消 |
 | `POST /api/ask` | SSE 问答；`kbId` 可选，`sessionId`（页面会话 ID）供网关稳定命中 prompt 缓存 |
 
 SSE 帧序（FAQ 主链）固定为 `intent → retrieve → rerank → generate → (delta/thinking…) → (validate) → done`；**CLARIFY / OUT_OF_SCOPE 分支在 intent 后静默短路**，不发 retrieve/rerank/validate 帧（生成文本仍走 `delta/thinking`；OOS 的 `done` 无 sources，CLARIFY 以流结束收尾）。异常发 `{"type":"error"}`。这一帧序是前后端契约（前端 `applyEvent` 依赖它），改动任何一环都不得破坏。
@@ -159,6 +164,10 @@ SSE 帧序（FAQ 主链）固定为 `intent → retrieve → rerank → generate
 - **`/api/ask` 的 SSE 必须流式透传**：`src/app/api/[...path]/route.ts` 的 catch-all 是刻意设计；换 next.config.ts rewrites 会缓冲响应体，实测卡死流式问答。
 - 前端改动验证：`pnpm validate`（tsc + eslint + stylelint 三合一）；完整发布走 `pnpm run build`。
 - Windows 细节：uvicorn 只绑 `127.0.0.1:8000` 是有意为之（后端不直接对外 + 避免 WS 升级冲突），勿改 `0.0.0.0`；杀后端用 `taskkill /PID <pid> /T /F` 杀整棵树，只杀监听 PID 会留残子进程占着 :8000。
+- **非 HTML 解析只走 `document_converter.convert_bytes()`，永远不要把 URL 或本地路径交给 `MarkItDown.convert()`**：它自己抓取会用固定请求头（丢掉浏览器 UA 与登录态兜底），还会把字符串按本地路径解析。
+- **`link_extractor.extract_content()` 的 `http/https` 白名单是安全边界**，不是多余校验：`urllib` 支持 `file://`，去掉它等于让访客通过转存接口读宿主机文件（内容还会进 LLM 上下文）。
+- PDF/Office 转换是 CPU 活，必须在 `asyncio.to_thread` 里跑（`main.py` 上传、`task_queue` 转存都已如此），挪回事件循环会卡住 `/api/ask` 的 SSE。
+- `data/tasks.json` 里 2026-10-09 之前的三条转存任务停在 `status=running`（终态被进度回调的 `status="running"` 覆盖，实测三条全中）；修复只对新任务生效，旧记录是 inert 的，无需处理。
 - `_trash/` 存放历史参考原型（初创 Python 脚手架、已移除的组件），被 gitignore，不参与构建，勿往里写新代码。
 - 运行时数据在 `data/`（gitignore），勿提交。
 
