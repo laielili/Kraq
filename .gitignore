@@ -172,6 +172,7 @@ Desktop.ini
 /data/
 
 #AI-Agents
+.workbuddy
 AGENTS.md
 DESIGN.md
 SOP.md
