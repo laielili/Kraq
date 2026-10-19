@@ -1,11 +1,20 @@
-"""RAG ask pipeline (SSE event generator), ported from the brief + src contracts.
+"""RAG 问答链：阶段实现与链路语义。
 
-run_ask(question, kb_id) yields AskEvent dicts EXACTLY matching the applyEvent
-contract in src/app/page.tsx (types pinned in src/lib/rag/types.ts), plus a
-kb_id field on the first intent stage + done event so the frontend can pin
-which KB produced the answer.
+**编排不在本模块**：`/api/ask` 走 `backend/orchestrator/rag_graph.py`（LangGraph 节点
++ 条件边）→ `runner.astream_frames` → SSE 帧。本模块只提供被节点调用的阶段函数
+（意图取证、向量补算与取证、生成流、校验）和共享常量。
 
-Event order: intent -> retrieve -> rerank -> generate -> delta* -> validate -> done.
+下面的链路语义同时就是那张图的语义，也是 `tests/ask_contract/baseline.json` 的判据来源。
+每帧都带 `pipeline` 字段（`orchestrator/envelope.py`）；`kbId` 只出现在 stage 与 done 帧。
+
+正常链路：intent -> retrieve -> rerank -> generate -> (delta* / thinking*) -> validate -> done。
+四条早退分支各自不同，不是同一序的截断：
+- 档案库为空：intent -> retrieve(空候选) -> done
+- 融合无候选：intent -> retrieve -> done
+- 澄清：intent -> intent(追加 clarify/top1Score/threshold) -> generate -> delta* -> done
+  （不发 retrieve/rerank，也不校验）
+- 超出范围：intent -> generate -> delta* -> done
+任何阶段失败发 error 帧并终止，**error 之后不再有 done**。
 Intent is BINARY (FAQ | OUT_OF_SCOPE): the stage LLM classifies (INTENT_SYSTEM;
 SEARCH merged into FAQ, CLARIFY is NOT an LLM label) -> rule fallback (search.
 classify_intent, same label set). FAQ flow: vector search first — if the top-1
@@ -155,17 +164,11 @@ async def _intent_llm_invoke(cfg: Mapping[str, Any], question: str, session_id: 
     label = m.group(1)
     return label if label in VALID_INTENTS else None
 
-SYSTEM_PROMPT = (
-    "你是知识库问答助手，必须只依据给出的编号资料回答问题，"
-    "在答案中用 [n] 标注所引用资料的编号（如 [1]、[2]）。"
-    "如果资料不足以回答问题，就直接明确说明资料不足，不要编造内容。"
-)
 RAG_USER_TEMPLATE = "编号资料：\n{contexts}\n\n用户问题：{question}\n\n请基于以上资料回答，并标注引用编号。"
 
 NO_DOCS_ANSWER = "知识库暂无文档，请先在左侧「档案柜」中添加资料后再提问。"
 GEN_NOT_CONFIGURED = "尚未配置生成模型，请点击右上角「检索与生成参数 → 配置模型」完成配置。"
 NO_RELEVANT_ANSWER = "知识库中暂未检索到与该问题相关的资料，无法作答。"
-NO_RELEVANT_ANSWER_NOTE = NO_RELEVANT_ANSWER
 CITATION_RE = re.compile(r"\[(\d+)\]")
 
 
@@ -245,16 +248,6 @@ def _titles_map(docs: List[Mapping[str, Any]]) -> Dict[str, str]:
     return {str(d["id"]): str(d["title"]) for d in docs}
 
 
-# --------------------------------------------------------------------------
-# embedding via Chroma
-# --------------------------------------------------------------------------
-def _meta_matches_current(doc: Mapping[str, Any], model: str, dim: int) -> bool:
-    meta = doc.get("embeddingMeta")
-    if not isinstance(meta, Mapping):
-        return False
-    if str(meta.get("model") or "") != model or int(meta.get("dim") or 0) != dim:
-        return False
-    return bool(meta.get("upserted"))
 
 
 def _doc_text(doc: Mapping[str, Any]) -> str:
@@ -670,250 +663,3 @@ async def _run_validation(
     if validation is None:
         validation = rule_fallback_validate(answer, len(contexts), citations)
     return validation
-
-
-async def run_ask(
-    question: str,
-    kb_id: str = DEFAULT_KB_ID,
-    session_id: str = "",
-) -> AsyncGenerator[Dict[str, Any], None]:
-    kb_id = normalize_kb_id(kb_id)
-    cfg = get_config()
-    try:
-        docs = get_docs(kb_id)
-    except KeyError:
-        docs = get_docs(DEFAULT_KB_ID)
-        kb_id = DEFAULT_KB_ID
-
-    try:
-        # ------- intent (binary: FAQ | OUT_OF_SCOPE; LLM -> rule fallback) ----
-        intent: Optional[str] = None
-        detail: Dict[str, Any] = {}
-
-        llm_label = await _intent_llm_invoke(cfg, question)
-        if llm_label is not None:
-            intent = llm_label
-            detail["finalBy"] = "llm"
-
-        if intent not in VALID_INTENTS:
-            intent = classify_intent(question)
-            detail["finalBy"] = "rule"
-        detail["intent"] = intent
-        yield {"type": "stage", "stage": "intent", "data": detail, "kbId": kb_id}
-
-        gen_ep, gen_model = _resolve_stage(cfg, "generate")
-        if gen_ep is None:
-            yield {"type": "error", "message": GEN_NOT_CONFIGURED}
-            return
-
-        # ---------------- 超出范围：提示词驱动，先声明范围外再简短回应 --------
-        if intent == "OUT_OF_SCOPE":
-            yield {"type": "stage", "stage": "generate", "data": {"model": gen_model}, "kbId": kb_id}
-            answer = ""
-            async for ev in _generate_stream(
-                cfg,
-                question,
-                gen_ep,
-                gen_model,
-                session_id,
-                contexts_docs=[],
-                docs_by_id={},
-                goal=intent_goal(cfg, "OUT_OF_SCOPE"),
-                cite=False,
-                context_mode="none",
-            ):
-                if ev.get("type") == "done_answer":
-                    answer = ev.get("answer") or ""
-                    break
-                yield ev
-            if not answer.strip():
-                # 生成失败（已发 error）或空流：不再退回固定话术，诚实到此为止
-                return
-            yield {"type": "done", "answer": answer.strip(), "sources": [], "kbId": kb_id}
-            return
-
-        if not docs:
-            yield {
-                "type": "stage",
-                "stage": "retrieve",
-                "data": {
-                    "vectorAvailable": False,
-                    "bm25": [],
-                    "vector": [],
-                    "fused": [],
-                    "titles": {},
-                },
-                "kbId": kb_id,
-            }
-            yield {"type": "done", "answer": NO_DOCS_ANSWER, "sources": [], "kbId": kb_id}
-            return
-
-        # ---------------- retrieve: vector-first gate -> BM25+RRF -----------
-        candidate_k = _retrieve_top_k(cfg)
-        vector_list, vector_available = await vector_evidence(
-            kb_id, cfg, docs, question, candidate_k
-        )
-        top1_score = float(vector_list[0]["score"]) if vector_list else 0.0
-        threshold = float(cfg.get("clarifyThreshold") or 0.72)
-        # CLARIFY 闸门：向量 top-1 余弦低于阈值 → 澄清。此时 BM25 还没跑，
-        # 判据只有向量分。向量服务整体不可用（vector_available=False）时不澄清，
-        # 那是服务问题不是用户问题含糊，照走 BM25 单路检索。
-        clarify = vector_available and top1_score < threshold
-        docs_by_id = {str(d["id"]): d for d in docs}
-
-        if clarify:
-            detail["clarify"] = True
-            detail["top1Score"] = _round4(top1_score)
-            detail["threshold"] = _round4(threshold)
-            yield {"type": "stage", "stage": "intent", "data": detail, "kbId": kb_id}
-            # 澄清分支：跳过 BM25/rerank（不发这两阶段事件），也跳过校验——
-            # 校验器要求 [n] 引用，会把"只追问不作答"判成失败
-            yield {"type": "stage", "stage": "generate", "data": {"model": gen_model}, "kbId": kb_id}
-            answer = ""
-            async for ev in _generate_stream(
-                cfg,
-                question,
-                gen_ep,
-                gen_model,
-                session_id,
-                contexts_docs=vector_list,
-                docs_by_id=docs_by_id,
-                goal=intent_goal(cfg, "CLARIFY"),
-                cite=False,
-                context_mode="titles",
-            ):
-                if ev.get("type") == "done_answer":
-                    answer = ev.get("answer") or ""
-                    break
-                yield ev
-            if answer == "":
-                # done_answer 缺席说明生成已 yield error 并终止，直接结束
-                return
-            cited_docs = vector_list
-            sources = [
-                {
-                    "id": str(r["id"]),
-                    "title": str(docs_by_id.get(str(r["id"]), {}).get("title", "")),
-                    "content": str(docs_by_id.get(str(r["id"]), {}).get("content", "")),
-                    "score": _round4(r["score"]),
-                }
-                for r in cited_docs
-            ]
-            yield {"type": "done", "answer": answer, "sources": sources, "kbId": kb_id}
-            return
-
-        bm25_list = bm25_search(question, docs, candidate_k)
-        fused = rrf_fuse(
-            bm25=bm25_list,
-            vector=vector_list,
-            bm25_weight=float(cfg.get("bm25Weight") or 0.4),
-            vector_weight=float(cfg.get("vectorWeight") or 0.6),
-        )
-        yield {
-            "type": "stage",
-            "stage": "retrieve",
-            "data": {
-                "vectorAvailable": vector_available,
-                "top1Score": _round4(top1_score),
-                "threshold": _round4(threshold),
-                "bm25": [{"id": str(r["id"]), "score": _round4(r["score"])} for r in bm25_list],
-                "vector": [{"id": str(r["id"]), "score": _round4(r["score"])} for r in vector_list],
-                "fused": [{"id": str(r["id"]), "score": _round4(r["score"])} for r in fused],
-                "titles": _titles_map(docs),
-            },
-            "kbId": kb_id,
-        }
-
-        if not fused:
-            yield {"type": "done", "answer": NO_RELEVANT_ANSWER, "sources": [], "kbId": kb_id}
-            return
-
-        # ---------------- rerank -------------------------------------------
-        docs_by_id = {str(d["id"]): d for d in docs}
-        rerank_ep, rerank_model = _resolve_stage(cfg, "rerank")
-        reranked: List[Dict[str, Any]] = []
-        if rerank_ep is not None and rerank_model:
-            payload = [
-                {
-                    "id": str(r["id"]),
-                    "text": (
-                        str(docs_by_id.get(str(r["id"]), {}).get("title", ""))
-                        + "\n"
-                        + str(docs_by_id.get(str(r["id"]), {}).get("content", ""))
-                    ),
-                }
-                for r in fused
-            ]
-            try:
-                resp = await rerank(rerank_ep, rerank_model, question, payload)
-                scored_by_id = {str(x["id"]): float(x["score"]) for x in resp}
-                for idx, r in enumerate(fused):
-                    rid = str(r["id"])
-                    if rid in scored_by_id:
-                        reranked.append({"id": rid, "score": scored_by_id[rid], "matches": 0})
-                reranked.sort(key=lambda r: float(r["score"]), reverse=True)
-                # reorder metric: fused 序位 - rerank 序位 绝对值 作为 matches
-                fused_pos = {str(r["id"]): i for i, r in enumerate(fused)}
-                for out_i, r in enumerate(reranked):
-                    pre = fused_pos.get(str(r["id"]), out_i + 1)
-                    r["matches"] = abs(pre - out_i)
-            except Exception:
-                reranked = []
-        if not reranked:
-            reranked = heuristic_rerank(question, fused, docs_by_id, _rerank_top_n(cfg))
-            reranked = [
-                {"id": str(r["id"]), "score": _round4(r["score"]), "matches": int(r["matches"])}
-                for r in reranked
-            ]
-        reranked = reranked[: _rerank_top_n(cfg)]
-        yield {
-            "type": "stage",
-            "stage": "rerank",
-            "data": {
-                "reranked": reranked,
-                "titles": _titles_map(docs),
-            },
-            "kbId": kb_id,
-        }
-
-        # ---------------- generate (FAQ-RAG: intent goal + citations) --------
-        yield {"type": "stage", "stage": "generate", "data": {"model": gen_model}, "kbId": kb_id}
-        answer = ""
-        async for ev in _generate_stream(
-            cfg,
-            question,
-            gen_ep,
-            gen_model,
-            session_id,
-            contexts_docs=reranked,
-            docs_by_id=docs_by_id,
-            goal=intent_goal(cfg, "FAQ"),
-            cite=True,
-        ):
-            if ev.get("type") == "done_answer":
-                answer = ev.get("answer") or ""
-                break
-            yield ev
-        if not answer:
-            # 生成已 yield error 并终止（或空流）：done_answer 缺席，直接返回
-            return
-
-        # ---------------- validate (shared LLM + rule fallback) --------------
-        validation = await _run_validation(cfg, answer, reranked, docs_by_id)
-        if validation is not None:
-            yield {"type": "stage", "stage": "validate", "data": validation, "kbId": kb_id}
-
-        # ---------------- done: sources from reranked ------------------------
-        sources = [
-            {
-                "id": str(r["id"]),
-                "title": str(docs_by_id.get(str(r["id"]), {}).get("title", "")),
-                "content": str(docs_by_id.get(str(r["id"]), {}).get("content", "")),
-                "score": _round4(r["score"]),
-            }
-            for r in reranked
-        ]
-        yield {"type": "done", "answer": answer, "sources": sources, "kbId": kb_id}
-
-    except Exception as e:
-        yield {"type": "error", "message": f"请求处理异常：{e}（请检查端点配置或稍后重试）"}

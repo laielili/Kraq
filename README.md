@@ -109,7 +109,8 @@ ollama pull qllama/bge-reranker-v2-m3   # 重排（可选）
 ```
 backend/                 # FastAPI 后端（RAG 心脏）
   main.py                # 路由：health/config/models/kbs/kb/upload/ask(SSE)
-  pipeline.py            # run_ask 流水线 + 缺失向量补算（启动时后台 sync）
+  pipeline.py            # 各阶段实现（补算/取证/生成/校验）+ 启动时后台向量补算
+  orchestrator/          # LangGraph 编排：routing 两级路由、rag_graph 图、runner 事件流、envelope 信封、deps 注入
   search.py              # BM25、RRF、意图规则、启发式重排
   chroma_store.py        # Chroma PersistentClient（data/chroma/，每库一个 collection）
   store.py               # kb.json/config.json 存储：asyncio锁 + 原子写 + 版本迁移

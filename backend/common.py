@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import re
@@ -190,7 +189,6 @@ def first_json_object(text: str) -> Dict[str, Any] | None:
     return None
 
 
-_KB_LOCK = asyncio.Lock()
 
 __all__ = [
     "PROJECT_ROOT",
@@ -207,22 +205,7 @@ __all__ = [
     "atomic_write_json",
     "read_json_file",
     "first_json_object",
-    "KB_LOCK",
-    "KB_ASYNC_LOCK",
-    "kb_lock",
-    "kb_async_lock",
 ]
 
-# Brief wording uses "asyncio.Lock": keep synonym exports for clarity.
 
 
-KB_ASYNC_LOCK = None
-KB_LOCK = _KB_LOCK
-
-
-def kb_lock() -> asyncio.Lock:
-    return _KB_LOCK
-
-
-def kb_async_lock() -> asyncio.Lock:
-    return _KB_LOCK

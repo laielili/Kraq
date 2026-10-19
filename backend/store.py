@@ -46,9 +46,7 @@ DEFAULT_SUGGESTIONS = [
 # One asyncio.Lock protects BOTH config.json and kb.json (per brief).
 DATA_FILE_LOCK = asyncio.Lock()
 
-KB_LOCK = DATA_FILE_LOCK  # synonym used by earlier scaffolds
 
-HTTP_PROTOCOLS = ("http://", "https://")
 
 
 def _clamp_counter_value(cfg: dict) -> dict:
@@ -230,10 +228,6 @@ def load_config() -> dict:
     return _clamp_counter_value(_migrate_config(raw))
 
 
-def save_config(cfg: Mapping[str, object]) -> dict:
-    out = dict(cfg)
-    atomic_write_json(CONFIG_FILE, out)
-    return out
 
 
 def get_config() -> dict:
@@ -675,8 +669,6 @@ def load_or_seed_kbs() -> List[dict]:
     return out
 
 
-def write_kbs(kbs: List[dict]) -> None:
-    atomic_write_json(KB_FILE, {"kbs": kbs})
 
 
 def get_kbs() -> List[dict]:
@@ -819,9 +811,6 @@ def replace_docs(kb_id: str, docs: List[dict]) -> None:
     atomic_write_json(KB_FILE, {"kbs": kbs})
 
 
-def save_docs(kb_id: str, docs: List[dict]) -> None:
-    """Alias kept for pipeline use."""
-    replace_docs(kb_id, docs)
 
 
 # ---------------------------------------------------------------------------

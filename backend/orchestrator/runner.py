@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict
 
 from .envelope import PIPELINE_RAG
 from .rag_graph import build_graph

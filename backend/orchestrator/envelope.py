@@ -19,10 +19,8 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 PIPELINE_RAG = "rag"
 PIPELINE_DATA = "data"
-PIPELINE_SEARCH = "search"
 
 #: 各管线的阶段名。前端先按 pipeline 分派、再按 stage 渲染。
-RAG_STAGES: Tuple[str, ...] = ("intent", "retrieve", "rerank", "generate", "validate")
 DATA_STAGES: Tuple[str, ...] = (
     "scope",
     "parse",
@@ -34,7 +32,6 @@ DATA_STAGES: Tuple[str, ...] = (
     "validate",
 )
 
-IntentLabel = str  # "FAQ" | "OUT_OF_SCOPE" | 未来 "DATA" | "SEARCH"
 
 
 class Frames:

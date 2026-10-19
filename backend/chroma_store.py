@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 import threading
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
@@ -132,13 +132,8 @@ def query(
     return out
 
 
-def count_docs(kb_id: str) -> int:
-    col = _get_collection(kb_id, create=False)
-    return int(col.count()) if col is not None else 0
 
 
-def collection_exists(kb_id: str) -> bool:
-    return _get_collection(kb_id, create=False) is not None
 
 
 def drop_collection(kb_id: str) -> bool:
@@ -152,46 +147,5 @@ def drop_collection(kb_id: str) -> bool:
         return False
 
 
-def list_collections() -> List[Dict[str, Any]]:
-    client = _get_client()
-    out: List[Dict[str, Any]] = []
-    for col in client.list_collections():
-        name = getattr(col, "name", None) or (col.get("name") if isinstance(col, Mapping) else None)
-        meta = getattr(col, "metadata", None) or (col.get("metadata") if isinstance(col, Mapping) else None)
-        try:
-            cnt = int(col.count())
-        except Exception:
-            cnt = 0
-        out.append({"name": str(name or ""), "kbId": str((meta or {}).get("kbId") or ""), "count": cnt})
-    return out
 
 
-def sync_all(
-    kbs: Mapping[str, Sequence[Mapping[str, Any]]],
-    embeddings_by_doc: Mapping[str, Sequence[float]],
-) -> Dict[str, Any]:
-    """Idempotent startup backfill: for each kb, align Chroma to kb.json docs.
-
-    kbs: {kbId: [doc dicts incl. id + optional fresh embedding]}
-    embeddings_by_doc may carry vectors a caller just computed; docs whose
-    vector is missing from this map are skipped (left for lazy backfill).
-    Returns {kbId: {upserted, chroma_count}}.
-    """
-    report: Dict[str, Any] = {}
-    for kb_id, docs in (kbs or {}).items():
-        ids: List[str] = []
-        vectors: List[List[float]] = []
-        for d in docs:
-            did = str(d.get("id") or "")
-            vec = embeddings_by_doc.get(did) or d.get("embedding")
-            if did and isinstance(vec, list) and vec:
-                ids.append(did)
-                vectors.append([float(x) for x in vec])
-        if ids:
-            upsert(kb_id, ids, vectors)
-        col = _get_collection(kb_id, create=False)
-        report[str(kb_id)] = {
-            "upserted": len(ids),
-            "chroma_count": int(col.count()) if col is not None else 0,
-        }
-    return report

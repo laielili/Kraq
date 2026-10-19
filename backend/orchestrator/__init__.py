@@ -9,8 +9,6 @@ from .envelope import (
     DATA_STAGES,
     PIPELINE_DATA,
     PIPELINE_RAG,
-    PIPELINE_SEARCH,
-    RAG_STAGES,
     Frames,
 )
 
@@ -19,7 +17,5 @@ __all__ = [
     "RagDeps",
     "PIPELINE_RAG",
     "PIPELINE_DATA",
-    "PIPELINE_SEARCH",
-    "RAG_STAGES",
     "DATA_STAGES",
 ]

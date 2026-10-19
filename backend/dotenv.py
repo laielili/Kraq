@@ -47,4 +47,4 @@ def load_env_file() -> int:
     return applied
 
 
-LOADED = load_env_file()
+load_env_file()

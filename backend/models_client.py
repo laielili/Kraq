@@ -29,18 +29,10 @@ EMBED_BATCH_SIZE = 4
 CHAT_INVOKE_TIMEOUT = 30.0
 RERANK_TIMEOUT = 15.0
 
-RERANK_SCORE_KEYS = ("relevance.score", "relevance_score", "score")
 _SCORE_RE = re.compile(r"(?:^|(?<![0-9]))(10|[0-9])(?![0-9])")
 
-_client: httpx.AsyncClient | None = None
 
 
-def get_shared_client() -> httpx.AsyncClient:
-    """Module-level reusable httpx.AsyncClient (brief requirement)."""
-    global _client
-    if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(timeout=10.0)
-    return _client
 
 
 def normalize_base_url(base_url: str) -> str:

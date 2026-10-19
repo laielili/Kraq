@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "b1c85fdf-c463-41bf-8542-dfb9da5c9ee4",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\candidate.json",
+  "output": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.html",
+  "specification": {
+    "sha256": "626ea9e478de01b0c58303e48aae56234b2e5dd541122c8fe549099405e5fd89",
+    "bytes": 6250
+  },
+  "artifact": {
+    "sha256": "e4a32d9c4d92892e760769f0c47ceef9da00e44f06e0b12bc53bb8e2cfcceb7e",
+    "bytes": 764102
+  }
+}

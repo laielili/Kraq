@@ -75,20 +75,6 @@ def rrf_fuse(
     return out
 
 
-def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
-    if len(a) != len(b):
-        return 0.0
-    dot = 0.0
-    na = 0.0
-    nb = 0.0
-    for x, y in zip(a, b):
-        dot += x * y
-        na += x * x
-        nb += y * y
-    denom = na * nb
-    if denom <= 0:
-        return 0.0
-    return dot / denom ** 0.5
 
 
 # Supported reorder metric: stable sort by (matches desc, fused score desc),
@@ -114,9 +100,6 @@ def heuristic_rerank(
     return scored[:top_n]
 
 
-# 二分类意图（FAQ | OUT_OF_SCOPE）。SEARCH 已并入 FAQ-RAG；CLARIFY 不再是
-# 判定标签——它在 FAQ 检索途中由「最高余弦分数 < clarifyThreshold」触发。
-INTENT_LABELS = ("FAQ", "OUT_OF_SCOPE")
 
 FAQ_PATTERNS: Tuple[re.Pattern[str], ...] = tuple(
     re.compile(p)
@@ -156,35 +139,5 @@ def classify_intent(text: str) -> str:
     return "OUT_OF_SCOPE"
 
 
-_CITATION_RE = re.compile(r"\[(\d+)\]")
 
 
-def validate_answer(answer: str, contexts: Sequence[str]) -> Dict[str, object]:
-    """Ported from validator.ts — citation + naive hallucination checks."""
-    citations: List[int] = []
-    for m in _CITATION_RE.finditer(answer):
-        try:
-            n = int(m.group(1))
-        except ValueError:
-            continue
-        if n > 0:
-            citations.append(n)
-    if not citations:
-        return {"valid": False, "citations": [], "reason": "回答缺少引用标注 [n]"}
-    out_of_range = [n for n in citations if n > len(contexts)]
-    if out_of_range:
-        uniq = list(dict.fromkeys(out_of_range))
-        refs = "], [".join(str(n) for n in uniq)
-        return {
-            "valid": False,
-            "citations": citations,
-            "reason": f"引用编号越界: [{refs}]，资料共 {len(contexts)} 条",
-        }
-    total_len = sum(len(c) for c in contexts)
-    if len(answer) > total_len * 2:
-        return {"valid": False, "citations": citations, "reason": "回答长度远超资料长度，疑似幻觉"}
-    return {
-        "valid": True,
-        "citations": citations,
-        "reason": f"引用编号均在资料范围内（共 {len(citations)} 处）",
-    }

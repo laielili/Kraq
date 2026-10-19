@@ -1,13 +1,5 @@
 export type IntentLabel = 'FAQ' | 'OUT_OF_SCOPE';
 
-export interface KbDoc {
-  id: string;
-  title: string;
-  content: string;
-  embedding: number[] | null;
-  createdAt: string;
-}
-
 export interface KbDocMeta {
   id: string;
   title: string;
@@ -113,8 +105,6 @@ export interface RagConfig {
   clarifyThreshold: number;
   enableValidation: boolean;
 }
-
-export type RagConfigPatch = Partial<RagConfig>;
 
 export interface SourceDoc {
   id: string;

@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Dict, List, Mapping, TypedDict
+from typing import Any, Dict, List, Mapping, TypedDict
 
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
@@ -66,6 +66,19 @@ def _frames(state: Mapping[str, Any]) -> Frames:
     return Frames(PIPELINE_RAG, state.get("kb_id"))
 
 
+def _replay(fr: Frames, ev: Dict[str, Any]) -> Dict[str, Any]:
+    """`_generate_stream` 产出的是改造前的裸帧，经信封重发才有 pipeline 字段。
+    done_answer 是内部帧，原样返回给调用方自己消化。"""
+    kind = ev.get("type")
+    if kind == "delta":
+        return fr.delta(ev["text"])
+    if kind == "thinking":
+        return fr.thinking(ev["text"])
+    if kind == "error":
+        return fr.error(ev["message"])
+    return ev
+
+
 # ---------------------------------------------------------------- 节点
 
 
@@ -108,7 +121,7 @@ async def n_answer_out_of_scope(state: AskState) -> Dict[str, Any]:
         if ev.get("type") == "done_answer":
             answer = ev.get("answer") or ""
             break
-        w(ev)
+        w(_replay(fr, ev))
     if not answer.strip():
         return {"halt": True}
     return {"answer": answer.strip(), "sources": [], "branch": BRANCH_OUT_OF_SCOPE_ANSWER}
@@ -232,7 +245,7 @@ async def _generate_into(state: AskState, contexts_docs: List[Mapping[str, Any]]
         if ev.get("type") == "done_answer":
             answer = ev.get("answer") or ""
             break
-        w(ev)
+        w(_replay(fr, ev))
     if not answer:
         return {"halt": True}
     return {"answer": answer}

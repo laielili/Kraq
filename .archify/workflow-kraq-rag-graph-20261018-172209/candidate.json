@@ -1,0 +1,272 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Kraq 问答链 · 两级路由与早退分支",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": ".archify/workflow-kraq-rag-graph-20261018-172209/kraq-rag-graph.html"
+  },
+  "lanes": [
+    {
+      "id": "surface",
+      "label": "前端 :3000"
+    },
+    {
+      "id": "chain",
+      "label": "LangGraph 问答链"
+    },
+    {
+      "id": "exit",
+      "label": "早退分支（各自产出 done）",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "p1",
+      "label": "入口与 L1",
+      "fromCol": 0,
+      "toCol": 1,
+      "variant": "emphasis"
+    },
+    {
+      "id": "p2",
+      "label": "取证与 L2",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "p3",
+      "label": "生成与回收",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "groups": [],
+  "mainPath": [
+    "user",
+    "api",
+    "l1",
+    "probe",
+    "l2",
+    "fuse",
+    "genval",
+    "panel"
+  ],
+  "nodes": [
+    {
+      "id": "user",
+      "lane": "surface",
+      "col": 0,
+      "type": "external",
+      "label": "提问",
+      "sublabel": "选定档案库",
+      "width": 128
+    },
+    {
+      "id": "panel",
+      "lane": "surface",
+      "col": 5,
+      "type": "frontend",
+      "label": "答案与追溯面板",
+      "sublabel": "逐字流式 + [n]",
+      "width": 128
+    },
+    {
+      "id": "api",
+      "lane": "chain",
+      "col": 0,
+      "type": "backend",
+      "label": "POST /api/ask",
+      "sublabel": "SSE 透传",
+      "width": 128
+    },
+    {
+      "id": "l1",
+      "lane": "chain",
+      "col": 1,
+      "type": "backend",
+      "label": "L1 管线路由",
+      "sublabel": "模型 → 规则",
+      "width": 128
+    },
+    {
+      "id": "probe",
+      "lane": "chain",
+      "col": 2,
+      "type": "database",
+      "label": "向量取证",
+      "sublabel": "含补算写盘",
+      "width": 128
+    },
+    {
+      "id": "l2",
+      "lane": "chain",
+      "col": 3,
+      "type": "security",
+      "label": "L2 策略路由",
+      "sublabel": "top1 比阈值",
+      "width": 128
+    },
+    {
+      "id": "fuse",
+      "lane": "chain",
+      "col": 4,
+      "type": "backend",
+      "label": "BM25 + RRF",
+      "sublabel": "融合后重排",
+      "width": 128
+    },
+    {
+      "id": "genval",
+      "lane": "chain",
+      "col": 5,
+      "type": "backend",
+      "label": "生成与校验",
+      "sublabel": "双流 + 引用",
+      "width": 128
+    },
+    {
+      "id": "oos",
+      "lane": "exit",
+      "col": 1,
+      "type": "backend",
+      "label": "超出范围直答",
+      "sublabel": "无固定话术",
+      "width": 128
+    },
+    {
+      "id": "clarify",
+      "lane": "exit",
+      "col": 3,
+      "type": "backend",
+      "label": "澄清",
+      "sublabel": "只喂标题",
+      "width": 128
+    },
+    {
+      "id": "norel",
+      "lane": "exit",
+      "col": 4,
+      "type": "backend",
+      "label": "融合无候选",
+      "sublabel": "直接 done",
+      "width": 128
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_user_api",
+      "from": "user",
+      "to": "api",
+      "variant": "default"
+    },
+    {
+      "id": "e_api_l1",
+      "from": "api",
+      "to": "l1",
+      "label": "进入图",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e_l1_probe",
+      "from": "l1",
+      "to": "probe",
+      "label": "FAQ",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e_probe_l2",
+      "from": "probe",
+      "to": "l2",
+      "label": "top1 分数",
+      "variant": "default"
+    },
+    {
+      "id": "e_l2_fuse",
+      "from": "l2",
+      "to": "fuse",
+      "label": "达阈值",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e_fuse_genval",
+      "from": "fuse",
+      "to": "genval",
+      "label": "重排后",
+      "variant": "default"
+    },
+    {
+      "id": "e_genval_panel",
+      "from": "genval",
+      "to": "panel",
+      "label": "done + sources",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e_l1_oos",
+      "from": "l1",
+      "to": "oos",
+      "label": "超出范围",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "e_l2_clarify",
+      "from": "l2",
+      "to": "clarify",
+      "label": "低于阈值",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "e_fuse_norel",
+      "from": "fuse",
+      "to": "norel",
+      "label": "候选为空",
+      "variant": "dashed",
+      "role": "branch"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "取证与副作用",
+      "items": [
+        "向量补算是链路里唯一写盘步骤：upsert Chroma + 持锁回写 kb.json",
+        "L2 的判据只能来自取证结果，所以路由在检索之后、BM25 之前",
+        "向量服务不可用时不触发澄清，退到 BM25 单腿（degradePolicy 尚未接配置）"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "事件信封（前端零感知）",
+      "items": [
+        "每帧带 pipeline 字段：先分派管线，再渲染阶段",
+        "stage 与 done 带 kbId；delta / thinking / error 不带",
+        "error 是终态，之后不再有 done，面板停在最后阶段"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "图上未画",
+      "items": [
+        "档案库为空：在 L1 出口判定，发一帧空 retrieve 后直接 done",
+        "生成端点未配置：L1 之后直接 error 终止",
+        "检索算法本体在 backend/pipeline.py 与 search.py，图只负责编排"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "护栏",
+      "items": [
+        "tests/ask_contract 12 组场景逐帧对拍，基线为旧 run_ask 存档",
+        "orchestrator_check 三项：注入身份 / 信封重建 / 帧必带 pipeline",
+        "编排 backend/orchestrator/*.py；阶段 backend/pipeline.py、search.py"
+      ]
+    }
+  ]
+}

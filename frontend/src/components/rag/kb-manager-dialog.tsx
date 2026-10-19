@@ -73,12 +73,6 @@ function toSuggestionDrafts(list: string[] | undefined): string[] {
   );
 }
 
-export type KbActionPhase =
-  | 'rename'
-  | 'create'
-  | 'delete'
-  | null;
-
 interface SettingsTarget {
   /** 打开面板时的 kbId（改名需要旧的） */
   kbId: string;
