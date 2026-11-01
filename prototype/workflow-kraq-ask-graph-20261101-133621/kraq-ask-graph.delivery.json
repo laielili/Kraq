@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "93318427-f07d-47f4-9a38-06f2614f782f",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.json",
+  "output": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.html",
+  "specification": {
+    "sha256": "36c970c2bcf42dc86ac36c831e2c23287d0119382e88bd6e5c2b75c0eb1a006e",
+    "bytes": 11308
+  },
+  "artifact": {
+    "sha256": "c349297a790233f388b565658ea9669b67469b406f4fe204d005b0fae01904ab",
+    "bytes": 775357
+  }
+}

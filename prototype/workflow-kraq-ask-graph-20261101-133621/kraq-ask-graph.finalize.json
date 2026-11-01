@@ -5,16 +5,16 @@
   "status": "pass",
   "type": "workflow",
   "quality": "showcase",
-  "startedAt": "2026-10-18T11:38:22.547Z",
+  "startedAt": "2026-11-01T05:57:54.972Z",
   "specification": {
-    "path": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\candidate.json",
-    "sha256": "626ea9e478de01b0c58303e48aae56234b2e5dd541122c8fe549099405e5fd89",
-    "bytes": 6250
+    "path": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.json",
+    "sha256": "36c970c2bcf42dc86ac36c831e2c23287d0119382e88bd6e5c2b75c0eb1a006e",
+    "bytes": 11308
   },
   "artifact": {
-    "path": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.html",
-    "sha256": "e4a32d9c4d92892e760769f0c47ceef9da00e44f06e0b12bc53bb8e2cfcceb7e",
-    "bytes": 764102
+    "path": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.html",
+    "sha256": "c349297a790233f388b565658ea9669b67469b406f4fe204d005b0fae01904ab",
+    "bytes": 775357
   },
   "stages": {
     "validate": {
@@ -24,13 +24,15 @@
       "execution": "embedded-in-deliver",
       "command": [
         "D:\\nodejs\\node.exe",
-        "C:\\Users\\lilai\\.qoder\\skills\\archify\\bin\\archify.mjs",
+        "D:\\Projects\\Skills\\skills\\archify\\bin\\archify.mjs",
         "deliver",
         "workflow",
-        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\candidate.json",
-        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.html",
+        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.json",
+        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.html",
         "--quality",
         "showcase",
+        "--repo-root",
+        "D:\\Projects\\CodeProjects\\kraq",
         "--json"
       ],
       "receipt": {
@@ -38,8 +40,8 @@
         "ok": true,
         "command": "validate",
         "specification": {
-          "sha256": "626ea9e478de01b0c58303e48aae56234b2e5dd541122c8fe549099405e5fd89",
-          "bytes": 6250
+          "sha256": "36c970c2bcf42dc86ac36c831e2c23287d0119382e88bd6e5c2b75c0eb1a006e",
+          "bytes": 11308
         },
         "validation": {
           "checksPassed": 9,
@@ -54,33 +56,35 @@
     "deliver": {
       "status": "pass",
       "exitCode": 0,
-      "durationMs": 953,
+      "durationMs": 1005,
       "command": [
         "D:\\nodejs\\node.exe",
-        "C:\\Users\\lilai\\.qoder\\skills\\archify\\bin\\archify.mjs",
+        "D:\\Projects\\Skills\\skills\\archify\\bin\\archify.mjs",
         "deliver",
         "workflow",
-        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\candidate.json",
-        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.html",
+        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.json",
+        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.html",
         "--quality",
         "showcase",
+        "--repo-root",
+        "D:\\Projects\\CodeProjects\\kraq",
         "--json"
       ],
       "receipt": {
         "schemaVersion": 1,
-        "receiptId": "b1c85fdf-c463-41bf-8542-dfb9da5c9ee4",
+        "receiptId": "93318427-f07d-47f4-9a38-06f2614f782f",
         "ok": true,
         "command": "deliver",
         "type": "workflow",
-        "input": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\candidate.json",
-        "output": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.html",
+        "input": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.json",
+        "output": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.html",
         "specification": {
-          "sha256": "626ea9e478de01b0c58303e48aae56234b2e5dd541122c8fe549099405e5fd89",
-          "bytes": 6250
+          "sha256": "36c970c2bcf42dc86ac36c831e2c23287d0119382e88bd6e5c2b75c0eb1a006e",
+          "bytes": 11308
         },
         "artifact": {
-          "sha256": "e4a32d9c4d92892e760769f0c47ceef9da00e44f06e0b12bc53bb8e2cfcceb7e",
-          "bytes": 764102
+          "sha256": "c349297a790233f388b565658ea9669b67469b406f4fe204d005b0fae01904ab",
+          "bytes": 775357
         },
         "validation": {
           "checksPassed": 9,
@@ -89,6 +93,12 @@
           "compositionStatus": "pass",
           "errors": 0,
           "warnings": 0
+        },
+        "evidence": {
+          "verified": true,
+          "repository": "https://github.com/laielili/Kraq",
+          "revision": "86d9ae75a111849e707de3a5eea4726b806c8c93",
+          "references": 17
         },
         "update": {
           "status": "unavailable",
@@ -106,20 +116,20 @@
     "check": {
       "status": "pass",
       "exitCode": 0,
-      "durationMs": 133,
+      "durationMs": 137,
       "command": [
         "D:\\nodejs\\node.exe",
-        "C:\\Users\\lilai\\.qoder\\skills\\archify\\bin\\archify.mjs",
+        "D:\\Projects\\Skills\\skills\\archify\\bin\\archify.mjs",
         "check",
-        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.html",
+        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.html",
         "--require-provenance"
       ],
       "receipt": {
         "ok": true,
-        "file": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.html",
+        "file": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.html",
         "artifact": {
-          "sha256": "e4a32d9c4d92892e760769f0c47ceef9da00e44f06e0b12bc53bb8e2cfcceb7e",
-          "bytes": 764102
+          "sha256": "c349297a790233f388b565658ea9669b67469b406f4fe204d005b0fae01904ab",
+          "bytes": 775357
         },
         "checks": [
           {
@@ -186,16 +196,16 @@
             "containerBorderRuns": 0,
             "labelRouteClearanceIssues": 0,
             "labelCanvasOverflowIssues": 0,
-            "minLabelRouteClearance": 63.3,
+            "minLabelRouteClearance": 10,
             "desktopReadabilityIssues": 0,
             "viewportHeightIssues": 0,
             "minProjectedNodeTextPx": 6.888888888888889,
-            "maxBends": 2,
-            "routesOverSuggestedBends": 0,
-            "maxStretch": 1.258,
+            "maxBends": 3,
+            "routesOverSuggestedBends": 2,
+            "maxStretch": 1.257,
             "routesOverSuggestedStretch": 0,
             "minSegmentPx": 16,
-            "minInteriorSegmentPx": 124,
+            "minInteriorSegmentPx": 76,
             "shortSegmentCount": 0,
             "shortEndpointSegmentCount": 0,
             "shortInteriorSegmentCount": 0,
@@ -209,7 +219,32 @@
           },
           "routeReview": {
             "crossings": [],
-            "detours": []
+            "detours": [
+              {
+                "relationship": {
+                  "id": "e_intent_oos",
+                  "from": "intent",
+                  "to": "oos",
+                  "label": "OUT_OF_SCOPE",
+                  "collectionIndex": 3,
+                  "artifactIndex": 4
+                },
+                "bends": 3,
+                "stretch": 1
+              },
+              {
+                "relationship": {
+                  "id": "e_user_api",
+                  "from": "user",
+                  "to": "api",
+                  "label": "问题 + 历史",
+                  "collectionIndex": 12,
+                  "artifactIndex": 13
+                },
+                "bends": 3,
+                "stretch": 1.257
+              }
+            ]
           },
           "leadingSpace": {
             "measured": false,
@@ -231,23 +266,23 @@
             },
             "minimumSourceTextPx": 8,
             "minimumProjectedTextPx": 6.888888888888889,
-            "semanticTextCount": 31
+            "semanticTextCount": 39
           },
           "issues": []
         },
         "provenance": "current",
-        "deliveryReceiptId": "b1c85fdf-c463-41bf-8542-dfb9da5c9ee4"
+        "deliveryReceiptId": "93318427-f07d-47f4-9a38-06f2614f782f"
       }
     },
     "browser-check": {
       "status": "pass",
       "exitCode": 0,
-      "durationMs": 1806,
+      "durationMs": 1685,
       "command": [
         "D:\\nodejs\\node.exe",
-        "C:\\Users\\lilai\\.qoder\\skills\\archify\\bin\\archify.mjs",
+        "D:\\Projects\\Skills\\skills\\archify\\bin\\archify.mjs",
         "browser-check",
-        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.html",
+        "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.html",
         "--json",
         "--require-provenance"
       ],
@@ -260,11 +295,11 @@
         "status": "pass",
         "visualReview": "not-requested",
         "provenance": "current",
-        "deliveryReceiptId": "b1c85fdf-c463-41bf-8542-dfb9da5c9ee4",
+        "deliveryReceiptId": "93318427-f07d-47f4-9a38-06f2614f782f",
         "artifact": {
-          "path": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.html",
-          "sha256": "e4a32d9c4d92892e760769f0c47ceef9da00e44f06e0b12bc53bb8e2cfcceb7e",
-          "bytes": 764102
+          "path": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.html",
+          "sha256": "c349297a790233f388b565658ea9669b67469b406f4fe204d005b0fae01904ab",
+          "bytes": 775357
         },
         "state": {
           "detail": "read",
@@ -295,64 +330,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1376,
-              "diagramWidth": 1346,
+              "readerWidth": 1266,
+              "diagramWidth": 1236,
               "pageComposition": {
                 "bodyPaddingPx": 12,
                 "headerPx": 52,
                 "diagramChromePx": 78,
-                "svgPx": 658,
+                "svgPx": 746,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 130,
+                  "heightPx": 119,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 65,
-                  "spaceAboveNodesPx": 51,
-                  "spaceBelowNodesPx": 14
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 130,
-                  "nodeCount": 6,
+                  "heightPx": 119,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 65,
-                  "spaceAboveNodesPx": 51,
-                  "spaceBelowNodesPx": 14
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 130,
+                  "heightPx": 119,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 119,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 65,
-                  "spaceAboveNodesPx": 51,
-                  "spaceBelowNodesPx": 14
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -388,64 +435,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1536,
-              "diagramWidth": 1506,
+              "readerWidth": 1322,
+              "diagramWidth": 1292,
               "pageComposition": {
                 "bodyPaddingPx": 64,
                 "headerPx": 60,
                 "diagramChromePx": 84,
-                "svgPx": 736,
+                "svgPx": 780,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 145,
+                  "heightPx": 124,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 73,
-                  "spaceAboveNodesPx": 57,
-                  "spaceBelowNodesPx": 15
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 145,
-                  "nodeCount": 6,
+                  "heightPx": 124,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 73,
-                  "spaceAboveNodesPx": 57,
-                  "spaceBelowNodesPx": 15
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 145,
+                  "heightPx": 124,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 124,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 73,
-                  "spaceAboveNodesPx": 57,
-                  "spaceBelowNodesPx": 15
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -481,64 +540,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1789,
-              "diagramWidth": 1759,
+              "readerWidth": 1455,
+              "diagramWidth": 1425,
               "pageComposition": {
                 "bodyPaddingPx": 64,
                 "headerPx": 60,
                 "diagramChromePx": 84,
                 "svgPx": 860,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 169,
+                  "heightPx": 137,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 85,
-                  "spaceAboveNodesPx": 67,
-                  "spaceBelowNodesPx": 18
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 169,
-                  "nodeCount": 6,
+                  "heightPx": 137,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 85,
-                  "spaceAboveNodesPx": 67,
-                  "spaceBelowNodesPx": 18
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 169,
+                  "heightPx": 137,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 137,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 85,
-                  "spaceAboveNodesPx": 67,
-                  "spaceBelowNodesPx": 18
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -574,64 +645,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1920,
-              "diagramWidth": 1870,
+              "readerWidth": 1842,
+              "diagramWidth": 1792,
               "pageComposition": {
                 "bodyPaddingPx": 64,
                 "headerPx": 68,
                 "diagramChromePx": 94,
-                "svgPx": 914,
+                "svgPx": 1082,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 180,
+                  "heightPx": 173,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 90,
-                  "spaceAboveNodesPx": 71,
-                  "spaceBelowNodesPx": 19
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 180,
-                  "nodeCount": 6,
+                  "heightPx": 173,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 90,
-                  "spaceAboveNodesPx": 71,
-                  "spaceBelowNodesPx": 19
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 180,
+                  "heightPx": 173,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 173,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 90,
-                  "spaceAboveNodesPx": 71,
-                  "spaceBelowNodesPx": 19
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -720,64 +803,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1376,
-              "diagramWidth": 1346,
+              "readerWidth": 1266,
+              "diagramWidth": 1236,
               "pageComposition": {
                 "bodyPaddingPx": 12,
                 "headerPx": 52,
                 "diagramChromePx": 78,
-                "svgPx": 658,
+                "svgPx": 746,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 130,
+                  "heightPx": 119,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 65,
-                  "spaceAboveNodesPx": 51,
-                  "spaceBelowNodesPx": 14
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 130,
-                  "nodeCount": 6,
+                  "heightPx": 119,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 65,
-                  "spaceAboveNodesPx": 51,
-                  "spaceBelowNodesPx": 14
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 130,
+                  "heightPx": 119,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 119,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 65,
-                  "spaceAboveNodesPx": 51,
-                  "spaceBelowNodesPx": 14
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -813,64 +908,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1536,
-              "diagramWidth": 1506,
+              "readerWidth": 1322,
+              "diagramWidth": 1292,
               "pageComposition": {
                 "bodyPaddingPx": 64,
                 "headerPx": 60,
                 "diagramChromePx": 84,
-                "svgPx": 736,
+                "svgPx": 780,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 145,
+                  "heightPx": 124,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 73,
-                  "spaceAboveNodesPx": 57,
-                  "spaceBelowNodesPx": 15
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 145,
-                  "nodeCount": 6,
+                  "heightPx": 124,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 73,
-                  "spaceAboveNodesPx": 57,
-                  "spaceBelowNodesPx": 15
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 145,
+                  "heightPx": 124,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 124,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 73,
-                  "spaceAboveNodesPx": 57,
-                  "spaceBelowNodesPx": 15
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -906,64 +1013,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1789,
-              "diagramWidth": 1759,
+              "readerWidth": 1455,
+              "diagramWidth": 1425,
               "pageComposition": {
                 "bodyPaddingPx": 64,
                 "headerPx": 60,
                 "diagramChromePx": 84,
                 "svgPx": 860,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 169,
+                  "heightPx": 137,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 85,
-                  "spaceAboveNodesPx": 67,
-                  "spaceBelowNodesPx": 18
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 169,
-                  "nodeCount": 6,
+                  "heightPx": 137,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 85,
-                  "spaceAboveNodesPx": 67,
-                  "spaceBelowNodesPx": 18
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 169,
+                  "heightPx": 137,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 137,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 85,
-                  "spaceAboveNodesPx": 67,
-                  "spaceBelowNodesPx": 18
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -999,64 +1118,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1920,
-              "diagramWidth": 1870,
+              "readerWidth": 1842,
+              "diagramWidth": 1792,
               "pageComposition": {
                 "bodyPaddingPx": 64,
                 "headerPx": 68,
                 "diagramChromePx": 94,
-                "svgPx": 914,
+                "svgPx": 1082,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 180,
+                  "heightPx": 173,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 90,
-                  "spaceAboveNodesPx": 71,
-                  "spaceBelowNodesPx": 19
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 180,
-                  "nodeCount": 6,
+                  "heightPx": 173,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 90,
-                  "spaceAboveNodesPx": 71,
-                  "spaceBelowNodesPx": 19
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 180,
+                  "heightPx": 173,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 173,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 90,
-                  "spaceAboveNodesPx": 71,
-                  "spaceBelowNodesPx": 19
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -1097,64 +1228,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1376,
-              "diagramWidth": 1346,
+              "readerWidth": 1266,
+              "diagramWidth": 1236,
               "pageComposition": {
                 "bodyPaddingPx": 12,
                 "headerPx": 52,
                 "diagramChromePx": 78,
-                "svgPx": 658,
+                "svgPx": 746,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 130,
+                  "heightPx": 119,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 65,
-                  "spaceAboveNodesPx": 51,
-                  "spaceBelowNodesPx": 14
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 130,
-                  "nodeCount": 6,
+                  "heightPx": 119,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 65,
-                  "spaceAboveNodesPx": 51,
-                  "spaceBelowNodesPx": 14
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 130,
+                  "heightPx": 119,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 119,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 65,
-                  "spaceAboveNodesPx": 51,
-                  "spaceBelowNodesPx": 14
+                  "nodeSpanPx": 60,
+                  "spaceAboveNodesPx": 47,
+                  "spaceBelowNodesPx": 13
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -1190,64 +1333,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1536,
-              "diagramWidth": 1506,
+              "readerWidth": 1322,
+              "diagramWidth": 1292,
               "pageComposition": {
                 "bodyPaddingPx": 64,
                 "headerPx": 60,
                 "diagramChromePx": 84,
-                "svgPx": 736,
+                "svgPx": 780,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 145,
+                  "heightPx": 124,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 73,
-                  "spaceAboveNodesPx": 57,
-                  "spaceBelowNodesPx": 15
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 145,
-                  "nodeCount": 6,
+                  "heightPx": 124,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 73,
-                  "spaceAboveNodesPx": 57,
-                  "spaceBelowNodesPx": 15
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 145,
+                  "heightPx": 124,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 124,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 73,
-                  "spaceAboveNodesPx": 57,
-                  "spaceBelowNodesPx": 15
+                  "nodeSpanPx": 62,
+                  "spaceAboveNodesPx": 49,
+                  "spaceBelowNodesPx": 13
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -1283,64 +1438,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1789,
-              "diagramWidth": 1759,
+              "readerWidth": 1455,
+              "diagramWidth": 1425,
               "pageComposition": {
                 "bodyPaddingPx": 64,
                 "headerPx": 60,
                 "diagramChromePx": 84,
                 "svgPx": 860,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 169,
+                  "heightPx": 137,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 85,
-                  "spaceAboveNodesPx": 67,
-                  "spaceBelowNodesPx": 18
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 169,
-                  "nodeCount": 6,
+                  "heightPx": 137,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 85,
-                  "spaceAboveNodesPx": 67,
-                  "spaceBelowNodesPx": 18
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 169,
+                  "heightPx": 137,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 137,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 85,
-                  "spaceAboveNodesPx": 67,
-                  "spaceBelowNodesPx": 18
+                  "nodeSpanPx": 69,
+                  "spaceAboveNodesPx": 54,
+                  "spaceBelowNodesPx": 15
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -1376,64 +1543,76 @@
               "readerOverflow": null,
               "readerFit": null,
               "ok": true,
-              "readerWidth": 1920,
-              "diagramWidth": 1870,
+              "readerWidth": 1842,
+              "diagramWidth": 1792,
               "pageComposition": {
                 "bodyPaddingPx": 64,
                 "headerPx": 68,
                 "diagramChromePx": 94,
-                "svgPx": 914,
+                "svgPx": 1082,
                 "cardsPx": 0,
-                "viewBoxHeight": 528
+                "viewBoxHeight": 652
               },
               "viewBoxWidth": 1080,
               "workflowLanes": [
                 {
                   "frameId": "lane-0",
-                  "heightPx": 180,
+                  "heightPx": 173,
                   "nodeCount": 2,
                   "nodeIds": [
                     "user",
                     "panel"
                   ],
-                  "nodeSpanPx": 90,
-                  "spaceAboveNodesPx": 71,
-                  "spaceBelowNodesPx": 19
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
                 },
                 {
                   "frameId": "lane-1",
-                  "heightPx": 180,
-                  "nodeCount": 6,
+                  "heightPx": 173,
+                  "nodeCount": 2,
                   "nodeIds": [
-                    "api",
-                    "l1",
-                    "probe",
-                    "l2",
-                    "fuse",
-                    "genval"
+                    "oos",
+                    "no_docs"
                   ],
-                  "nodeSpanPx": 90,
-                  "spaceAboveNodesPx": 71,
-                  "spaceBelowNodesPx": 19
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
                 },
                 {
                   "frameId": "lane-2",
-                  "heightPx": 180,
+                  "heightPx": 173,
+                  "nodeCount": 6,
+                  "nodeIds": [
+                    "api",
+                    "load",
+                    "intent",
+                    "retrieve",
+                    "rerank",
+                    "generate"
+                  ],
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
+                },
+                {
+                  "frameId": "lane-3",
+                  "heightPx": 173,
                   "nodeCount": 3,
                   "nodeIds": [
-                    "oos",
+                    "requery",
                     "clarify",
-                    "norel"
+                    "no_relevant"
                   ],
-                  "nodeSpanPx": 90,
-                  "spaceAboveNodesPx": 71,
-                  "spaceBelowNodesPx": 19
+                  "nodeSpanPx": 86,
+                  "spaceAboveNodesPx": 68,
+                  "spaceBelowNodesPx": 18
                 }
               ],
               "minimumProjectedNodeTextPx": 8,
               "minimumProjectedNonEdgeTextPx": 8,
               "minimumProjectedEdgeTextPx": 8,
-              "minimumProjectedNodeText": "选定档案库",
+              "minimumProjectedNodeText": "本页历史 + 档案库",
               "minimumProjectedNodeTextDetail": "context",
               "minimumProjectedNodeTextOwner": {
                 "kind": "node",
@@ -1461,7 +1640,7 @@
           "contactSheet": null
         },
         "sidecars": {
-          "receipt": "kraq-rag-graph.browser-check.json",
+          "receipt": "kraq-ask-graph.browser-check.json",
           "files": []
         }
       }
@@ -1469,23 +1648,23 @@
   },
   "diagnostics": [],
   "evidence": {
-    "receipt": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.finalize.json",
-    "summaryReceipt": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.finalize-summary.json",
-    "browserCheckReceipt": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.browser-check.json"
+    "receipt": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.finalize.json",
+    "summaryReceipt": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.finalize-summary.json",
+    "browserCheckReceipt": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.browser-check.json"
   },
   "visualReview": "not-requested",
-  "finishedAt": "2026-10-18T11:38:26.055Z",
-  "durationMs": 3507,
+  "finishedAt": "2026-11-01T05:57:58.392Z",
+  "durationMs": 3419,
   "update": {
     "status": "update_available",
     "installedVersion": "3.0.1",
-    "availableVersion": "3.1.0",
-    "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.1.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.2.0",
     "severity": "normal",
-    "checkedAt": "2026-10-18T09:25:42.535Z",
+    "checkedAt": "2026-11-01T05:36:51.248Z",
     "source": "cache",
     "noticeRequired": true,
-    "noticeText": "Archify update: 3.0.1 → 3.1.0. A previous check at 2026-10-18T09:25:42.535Z found a newer release. Release notes: https://github.com/tt-a1i/archify/releases/tag/v3.1.0. The installed Skill has not changed; ask to snooze or ignore this reminder.",
-    "eventKey": "archify@sha256:ffedc53390c9da6e859f41e432c5d2d0615a23cf00a503181f07efbba88a7ce8"
+    "noticeText": "Archify update: 3.0.1 → 3.2.0. A previous check at 2026-11-01T05:36:51.248Z found a newer release. Release notes: https://github.com/tt-a1i/archify/releases/tag/v3.2.0. The installed Skill has not changed; ask to snooze or ignore this reminder.",
+    "eventKey": "archify@sha256:70e210265c59f24dcbdf2a502ff671104b5454e7ee7d3554aecd86bad32384f5"
   }
 }

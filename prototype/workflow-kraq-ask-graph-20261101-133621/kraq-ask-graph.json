@@ -1,0 +1,473 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Kraq 问答链 · 意图路由、澄清闸门与补充分支",
+    "locale": "zh-CN",
+    "visual_preset": "editorial",
+    "quality_profile": "showcase",
+    "output": ".archify/workflow-kraq-ask-graph-20261101-133621/kraq-ask-graph.html",
+    "repository": {
+      "url": "https://github.com/laielili/Kraq.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "86d9ae75a111849e707de3a5eea4726b806c8c93"
+    }
+  },
+  "lanes": [
+    {
+      "id": "surface",
+      "label": "前端 :3000"
+    },
+    {
+      "id": "intent_exit",
+      "label": "意图出口（各自发 done）",
+      "variant": "exception"
+    },
+    {
+      "id": "chain",
+      "label": "LangGraph 问答链"
+    },
+    {
+      "id": "branch",
+      "label": "补充分支 / 检索出口"
+    }
+  ],
+  "phases": [
+    {
+      "id": "p1",
+      "label": "入口与意图",
+      "fromCol": 0,
+      "toCol": 1,
+      "variant": "emphasis"
+    },
+    {
+      "id": "p2",
+      "label": "取证与路由",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "p3",
+      "label": "重排与生成",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "groups": [
+    {
+      "id": "g_cont",
+      "label": "跳过 L2 澄清闸门",
+      "lane": "branch",
+      "fromCol": 1,
+      "toCol": 3,
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": [
+    "user",
+    "api",
+    "load",
+    "intent",
+    "retrieve",
+    "rerank",
+    "generate",
+    "panel"
+  ],
+  "nodes": [
+    {
+      "id": "user",
+      "lane": "surface",
+      "col": 0,
+      "type": "external",
+      "label": "提问",
+      "sublabel": "本页历史 + 档案库",
+      "width": 120,
+      "sources": [
+        {
+          "path": "frontend/src/app/page.tsx",
+          "line": 399,
+          "end_line": 430,
+          "label": "收集本页历史并提问"
+        }
+      ]
+    },
+    {
+      "id": "panel",
+      "lane": "surface",
+      "col": 5,
+      "type": "frontend",
+      "label": "答案与追溯面板",
+      "sublabel": "done + sources",
+      "width": 120,
+      "sources": [
+        {
+          "path": "frontend/src/components/rag/trace-panel.tsx",
+          "line": 35,
+          "end_line": 41,
+          "label": "追溯阶段顺序"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "lane": "chain",
+      "col": 0,
+      "type": "backend",
+      "label": "POST /api/ask",
+      "sublabel": "SSE 流式透传",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/main.py",
+          "line": 820,
+          "end_line": 848,
+          "label": "ask 端点"
+        }
+      ]
+    },
+    {
+      "id": "load",
+      "lane": "chain",
+      "col": 1,
+      "type": "backend",
+      "label": "load",
+      "sublabel": "载入 cfg 与档案",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/orchestrator/rag_graph.py",
+          "line": 90,
+          "end_line": 98,
+          "label": "load 节点"
+        }
+      ]
+    },
+    {
+      "id": "intent",
+      "lane": "chain",
+      "col": 2,
+      "type": "security",
+      "label": "intent · L1",
+      "sublabel": "模型判定 → 规则兜底",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/orchestrator/rag_graph.py",
+          "line": 101,
+          "end_line": 133,
+          "label": "intent 节点"
+        },
+        {
+          "path": "backend/orchestrator/routing.py",
+          "line": 72,
+          "end_line": 99,
+          "label": "L1 选管线"
+        }
+      ]
+    },
+    {
+      "id": "retrieve",
+      "lane": "chain",
+      "col": 3,
+      "type": "database",
+      "label": "retrieve",
+      "sublabel": "取证 → L2 → 融合",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/orchestrator/rag_graph.py",
+          "line": 170,
+          "end_line": 220,
+          "label": "retrieve 节点"
+        },
+        {
+          "path": "backend/pipeline.py",
+          "line": 748,
+          "end_line": 764,
+          "label": "向量取证与补算"
+        }
+      ]
+    },
+    {
+      "id": "rerank",
+      "lane": "chain",
+      "col": 4,
+      "type": "backend",
+      "label": "rerank",
+      "sublabel": "模型 / 启发式重排",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/orchestrator/rag_graph.py",
+          "line": 236,
+          "end_line": 275,
+          "label": "rerank 节点"
+        }
+      ]
+    },
+    {
+      "id": "generate",
+      "lane": "chain",
+      "col": 5,
+      "type": "backend",
+      "label": "generate",
+      "sublabel": "引用生成 + 校验",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/orchestrator/rag_graph.py",
+          "line": 312,
+          "end_line": 334,
+          "label": "生成 RAG / CONTINUATION"
+        },
+        {
+          "path": "backend/pipeline.py",
+          "line": 817,
+          "end_line": 889,
+          "label": "生成流与上下文装配"
+        }
+      ]
+    },
+    {
+      "id": "requery",
+      "lane": "branch",
+      "col": 2,
+      "type": "backend",
+      "label": "requery",
+      "sublabel": "意图模型重写查询",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/orchestrator/rag_graph.py",
+          "line": 156,
+          "end_line": 167,
+          "label": "requery 节点"
+        },
+        {
+          "path": "backend/pipeline.py",
+          "line": 211,
+          "end_line": 263,
+          "label": "重写与回落"
+        }
+      ]
+    },
+    {
+      "id": "oos",
+      "lane": "intent_exit",
+      "col": 1,
+      "type": "backend",
+      "label": "超出范围直答",
+      "sublabel": "空上下文 + done",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/orchestrator/rag_graph.py",
+          "line": 136,
+          "end_line": 153,
+          "label": "OOS 直答"
+        }
+      ]
+    },
+    {
+      "id": "no_docs",
+      "lane": "intent_exit",
+      "col": 2,
+      "type": "backend",
+      "label": "空档案库",
+      "sublabel": "空 retrieve + done",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/orchestrator/rag_graph.py",
+          "line": 223,
+          "end_line": 229,
+          "label": "空库短答"
+        }
+      ]
+    },
+    {
+      "id": "clarify",
+      "lane": "branch",
+      "col": 4,
+      "type": "security",
+      "label": "澄清",
+      "sublabel": "只给标题 + done",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/orchestrator/rag_graph.py",
+          "line": 302,
+          "end_line": 309,
+          "label": "澄清生成"
+        }
+      ]
+    },
+    {
+      "id": "no_relevant",
+      "lane": "branch",
+      "col": 5,
+      "type": "backend",
+      "label": "无相关资料",
+      "sublabel": "固定话术 + done",
+      "width": 120,
+      "sources": [
+        {
+          "path": "backend/orchestrator/rag_graph.py",
+          "line": 232,
+          "end_line": 233,
+          "label": "无候选短答"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_user_api",
+      "from": "user",
+      "to": "api",
+      "label": "问题 + 历史",
+      "variant": "default",
+      "role": "main"
+    },
+    {
+      "id": "e_api_load",
+      "from": "api",
+      "to": "load",
+      "label": "astream_frames",
+      "variant": "default",
+      "role": "main"
+    },
+    {
+      "id": "e_load_intent",
+      "from": "load",
+      "to": "intent",
+      "label": "cfg + docs",
+      "variant": "default",
+      "role": "main"
+    },
+    {
+      "id": "e_intent_retrieve",
+      "from": "intent",
+      "to": "retrieve",
+      "label": "FAQ",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "e_intent_requery",
+      "from": "intent",
+      "to": "requery",
+      "label": "CONTINUATION",
+      "variant": "emphasis",
+      "role": "branch"
+    },
+    {
+      "id": "e_requery_retrieve",
+      "from": "requery",
+      "to": "retrieve",
+      "label": "改写后的 query",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "e_intent_oos",
+      "from": "intent",
+      "to": "oos",
+      "label": "OUT_OF_SCOPE",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "e_intent_nodocs",
+      "from": "intent",
+      "to": "no_docs",
+      "label": "docs 为空",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e_retrieve_clarify",
+      "from": "retrieve",
+      "to": "clarify",
+      "label": "top1 低于阈值",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "e_retrieve_rerank",
+      "from": "retrieve",
+      "to": "rerank",
+      "label": "融合非空",
+      "variant": "default",
+      "role": "main"
+    },
+    {
+      "id": "e_retrieve_norel",
+      "from": "retrieve",
+      "to": "no_relevant",
+      "label": "fused 为空",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "e_rerank_generate",
+      "from": "rerank",
+      "to": "generate",
+      "label": "top n",
+      "variant": "default",
+      "role": "main"
+    },
+    {
+      "id": "e_generate_panel",
+      "from": "generate",
+      "to": "panel",
+      "label": "done + sources",
+      "variant": "emphasis",
+      "role": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "CONTINUATION 的三条规则",
+      "items": [
+        "requery 只服务检索与重排；生成仍按 [system] + 历史 + 本轮 user 装配",
+        "补充分支跳过 L2 澄清闸门，否则短补充的低分会再次触发澄清",
+        "history 由前端按本页已完成轮次收集；后端只清洗截断（40 条 / 24k 字符），不持久化",
+        "意图模型未配置时规则兜底只能判 FAQ / OUT_OF_SCOPE，不会产生 CONTINUATION"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "L2 两张判据表",
+      "items": [
+        "PRE：空档案库 → 澄清；向量可用且 top1 低于 clarifyThreshold（默认 0.72）→ 澄清",
+        "PRE：向量不可用且 degradePolicy=clarify_first → 澄清",
+        "POST：BM25 与向量 RRF 融合为空 → 无相关资料",
+        "澄清必须在 BM25 之前判定；全不命中才走完整 RAG"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "事件顺序与终态",
+      "items": [
+        "FAQ：intent → retrieve → rerank → generate → validate? → done",
+        "CONTINUATION：intent → requery → retrieve → rerank → generate → validate? → done",
+        "短答分支各自发 done；生成端点未配置时发 error 并结束，没有 done",
+        "error 是终态：追溯面板停在最后阶段；向量失败则仅走 BM25，不 Mock"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "校验与回归",
+      "items": [
+        "validate 在 generate 节点内执行；关闭校验或无引用资料时跳过该帧",
+        "澄清分支不跑校验：校验器要求 [n] 引用，会把只追问判成失败",
+        "tests/ask_contract 12 组逐帧对拍；orchestrator_check 三项守卫（注入身份 / 信封 / 帧必带 pipeline）"
+      ]
+    }
+  ]
+}

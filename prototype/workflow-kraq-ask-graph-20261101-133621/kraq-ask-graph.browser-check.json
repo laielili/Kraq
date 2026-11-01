@@ -6,11 +6,11 @@
   "status": "pass",
   "visualReview": "not-requested",
   "provenance": "current",
-  "deliveryReceiptId": "b1c85fdf-c463-41bf-8542-dfb9da5c9ee4",
+  "deliveryReceiptId": "93318427-f07d-47f4-9a38-06f2614f782f",
   "artifact": {
-    "path": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-rag-graph-20261018-172209\\kraq-rag-graph.html",
-    "sha256": "e4a32d9c4d92892e760769f0c47ceef9da00e44f06e0b12bc53bb8e2cfcceb7e",
-    "bytes": 764102
+    "path": "D:\\Projects\\CodeProjects\\kraq\\.archify\\workflow-kraq-ask-graph-20261101-133621\\kraq-ask-graph.html",
+    "sha256": "c349297a790233f388b565658ea9669b67469b406f4fe204d005b0fae01904ab",
+    "bytes": 775357
   },
   "state": {
     "detail": "read",
@@ -41,64 +41,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1376,
-        "diagramWidth": 1346,
+        "readerWidth": 1266,
+        "diagramWidth": 1236,
         "pageComposition": {
           "bodyPaddingPx": 12,
           "headerPx": 52,
           "diagramChromePx": 78,
-          "svgPx": 658,
+          "svgPx": 746,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 130,
+            "heightPx": 119,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 65,
-            "spaceAboveNodesPx": 51,
-            "spaceBelowNodesPx": 14
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-1",
-            "heightPx": 130,
-            "nodeCount": 6,
+            "heightPx": 119,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 65,
-            "spaceAboveNodesPx": 51,
-            "spaceBelowNodesPx": 14
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-2",
-            "heightPx": 130,
+            "heightPx": 119,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 119,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 65,
-            "spaceAboveNodesPx": 51,
-            "spaceBelowNodesPx": 14
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -134,64 +146,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1536,
-        "diagramWidth": 1506,
+        "readerWidth": 1322,
+        "diagramWidth": 1292,
         "pageComposition": {
           "bodyPaddingPx": 64,
           "headerPx": 60,
           "diagramChromePx": 84,
-          "svgPx": 736,
+          "svgPx": 780,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 145,
+            "heightPx": 124,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 73,
-            "spaceAboveNodesPx": 57,
-            "spaceBelowNodesPx": 15
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-1",
-            "heightPx": 145,
-            "nodeCount": 6,
+            "heightPx": 124,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 73,
-            "spaceAboveNodesPx": 57,
-            "spaceBelowNodesPx": 15
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-2",
-            "heightPx": 145,
+            "heightPx": 124,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 124,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 73,
-            "spaceAboveNodesPx": 57,
-            "spaceBelowNodesPx": 15
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -227,64 +251,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1789,
-        "diagramWidth": 1759,
+        "readerWidth": 1455,
+        "diagramWidth": 1425,
         "pageComposition": {
           "bodyPaddingPx": 64,
           "headerPx": 60,
           "diagramChromePx": 84,
           "svgPx": 860,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 169,
+            "heightPx": 137,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 85,
-            "spaceAboveNodesPx": 67,
-            "spaceBelowNodesPx": 18
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
           },
           {
             "frameId": "lane-1",
-            "heightPx": 169,
-            "nodeCount": 6,
+            "heightPx": 137,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 85,
-            "spaceAboveNodesPx": 67,
-            "spaceBelowNodesPx": 18
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
           },
           {
             "frameId": "lane-2",
-            "heightPx": 169,
+            "heightPx": 137,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 137,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 85,
-            "spaceAboveNodesPx": 67,
-            "spaceBelowNodesPx": 18
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -320,64 +356,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1920,
-        "diagramWidth": 1870,
+        "readerWidth": 1842,
+        "diagramWidth": 1792,
         "pageComposition": {
           "bodyPaddingPx": 64,
           "headerPx": 68,
           "diagramChromePx": 94,
-          "svgPx": 914,
+          "svgPx": 1082,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 180,
+            "heightPx": 173,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 90,
-            "spaceAboveNodesPx": 71,
-            "spaceBelowNodesPx": 19
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
           },
           {
             "frameId": "lane-1",
-            "heightPx": 180,
-            "nodeCount": 6,
+            "heightPx": 173,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 90,
-            "spaceAboveNodesPx": 71,
-            "spaceBelowNodesPx": 19
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
           },
           {
             "frameId": "lane-2",
-            "heightPx": 180,
+            "heightPx": 173,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 173,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 90,
-            "spaceAboveNodesPx": 71,
-            "spaceBelowNodesPx": 19
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -466,64 +514,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1376,
-        "diagramWidth": 1346,
+        "readerWidth": 1266,
+        "diagramWidth": 1236,
         "pageComposition": {
           "bodyPaddingPx": 12,
           "headerPx": 52,
           "diagramChromePx": 78,
-          "svgPx": 658,
+          "svgPx": 746,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 130,
+            "heightPx": 119,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 65,
-            "spaceAboveNodesPx": 51,
-            "spaceBelowNodesPx": 14
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-1",
-            "heightPx": 130,
-            "nodeCount": 6,
+            "heightPx": 119,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 65,
-            "spaceAboveNodesPx": 51,
-            "spaceBelowNodesPx": 14
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-2",
-            "heightPx": 130,
+            "heightPx": 119,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 119,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 65,
-            "spaceAboveNodesPx": 51,
-            "spaceBelowNodesPx": 14
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -559,64 +619,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1536,
-        "diagramWidth": 1506,
+        "readerWidth": 1322,
+        "diagramWidth": 1292,
         "pageComposition": {
           "bodyPaddingPx": 64,
           "headerPx": 60,
           "diagramChromePx": 84,
-          "svgPx": 736,
+          "svgPx": 780,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 145,
+            "heightPx": 124,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 73,
-            "spaceAboveNodesPx": 57,
-            "spaceBelowNodesPx": 15
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-1",
-            "heightPx": 145,
-            "nodeCount": 6,
+            "heightPx": 124,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 73,
-            "spaceAboveNodesPx": 57,
-            "spaceBelowNodesPx": 15
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-2",
-            "heightPx": 145,
+            "heightPx": 124,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 124,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 73,
-            "spaceAboveNodesPx": 57,
-            "spaceBelowNodesPx": 15
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -652,64 +724,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1789,
-        "diagramWidth": 1759,
+        "readerWidth": 1455,
+        "diagramWidth": 1425,
         "pageComposition": {
           "bodyPaddingPx": 64,
           "headerPx": 60,
           "diagramChromePx": 84,
           "svgPx": 860,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 169,
+            "heightPx": 137,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 85,
-            "spaceAboveNodesPx": 67,
-            "spaceBelowNodesPx": 18
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
           },
           {
             "frameId": "lane-1",
-            "heightPx": 169,
-            "nodeCount": 6,
+            "heightPx": 137,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 85,
-            "spaceAboveNodesPx": 67,
-            "spaceBelowNodesPx": 18
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
           },
           {
             "frameId": "lane-2",
-            "heightPx": 169,
+            "heightPx": 137,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 137,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 85,
-            "spaceAboveNodesPx": 67,
-            "spaceBelowNodesPx": 18
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -745,64 +829,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1920,
-        "diagramWidth": 1870,
+        "readerWidth": 1842,
+        "diagramWidth": 1792,
         "pageComposition": {
           "bodyPaddingPx": 64,
           "headerPx": 68,
           "diagramChromePx": 94,
-          "svgPx": 914,
+          "svgPx": 1082,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 180,
+            "heightPx": 173,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 90,
-            "spaceAboveNodesPx": 71,
-            "spaceBelowNodesPx": 19
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
           },
           {
             "frameId": "lane-1",
-            "heightPx": 180,
-            "nodeCount": 6,
+            "heightPx": 173,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 90,
-            "spaceAboveNodesPx": 71,
-            "spaceBelowNodesPx": 19
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
           },
           {
             "frameId": "lane-2",
-            "heightPx": 180,
+            "heightPx": 173,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 173,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 90,
-            "spaceAboveNodesPx": 71,
-            "spaceBelowNodesPx": 19
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -843,64 +939,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1376,
-        "diagramWidth": 1346,
+        "readerWidth": 1266,
+        "diagramWidth": 1236,
         "pageComposition": {
           "bodyPaddingPx": 12,
           "headerPx": 52,
           "diagramChromePx": 78,
-          "svgPx": 658,
+          "svgPx": 746,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 130,
+            "heightPx": 119,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 65,
-            "spaceAboveNodesPx": 51,
-            "spaceBelowNodesPx": 14
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-1",
-            "heightPx": 130,
-            "nodeCount": 6,
+            "heightPx": 119,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 65,
-            "spaceAboveNodesPx": 51,
-            "spaceBelowNodesPx": 14
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-2",
-            "heightPx": 130,
+            "heightPx": 119,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 119,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 65,
-            "spaceAboveNodesPx": 51,
-            "spaceBelowNodesPx": 14
+            "nodeSpanPx": 60,
+            "spaceAboveNodesPx": 47,
+            "spaceBelowNodesPx": 13
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -936,64 +1044,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1536,
-        "diagramWidth": 1506,
+        "readerWidth": 1322,
+        "diagramWidth": 1292,
         "pageComposition": {
           "bodyPaddingPx": 64,
           "headerPx": 60,
           "diagramChromePx": 84,
-          "svgPx": 736,
+          "svgPx": 780,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 145,
+            "heightPx": 124,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 73,
-            "spaceAboveNodesPx": 57,
-            "spaceBelowNodesPx": 15
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-1",
-            "heightPx": 145,
-            "nodeCount": 6,
+            "heightPx": 124,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 73,
-            "spaceAboveNodesPx": 57,
-            "spaceBelowNodesPx": 15
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
           },
           {
             "frameId": "lane-2",
-            "heightPx": 145,
+            "heightPx": 124,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 124,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 73,
-            "spaceAboveNodesPx": 57,
-            "spaceBelowNodesPx": 15
+            "nodeSpanPx": 62,
+            "spaceAboveNodesPx": 49,
+            "spaceBelowNodesPx": 13
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -1029,64 +1149,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1789,
-        "diagramWidth": 1759,
+        "readerWidth": 1455,
+        "diagramWidth": 1425,
         "pageComposition": {
           "bodyPaddingPx": 64,
           "headerPx": 60,
           "diagramChromePx": 84,
           "svgPx": 860,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 169,
+            "heightPx": 137,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 85,
-            "spaceAboveNodesPx": 67,
-            "spaceBelowNodesPx": 18
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
           },
           {
             "frameId": "lane-1",
-            "heightPx": 169,
-            "nodeCount": 6,
+            "heightPx": 137,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 85,
-            "spaceAboveNodesPx": 67,
-            "spaceBelowNodesPx": 18
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
           },
           {
             "frameId": "lane-2",
-            "heightPx": 169,
+            "heightPx": 137,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 137,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 85,
-            "spaceAboveNodesPx": 67,
-            "spaceBelowNodesPx": 18
+            "nodeSpanPx": 69,
+            "spaceAboveNodesPx": 54,
+            "spaceBelowNodesPx": 15
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -1122,64 +1254,76 @@
         "readerOverflow": null,
         "readerFit": null,
         "ok": true,
-        "readerWidth": 1920,
-        "diagramWidth": 1870,
+        "readerWidth": 1842,
+        "diagramWidth": 1792,
         "pageComposition": {
           "bodyPaddingPx": 64,
           "headerPx": 68,
           "diagramChromePx": 94,
-          "svgPx": 914,
+          "svgPx": 1082,
           "cardsPx": 0,
-          "viewBoxHeight": 528
+          "viewBoxHeight": 652
         },
         "viewBoxWidth": 1080,
         "workflowLanes": [
           {
             "frameId": "lane-0",
-            "heightPx": 180,
+            "heightPx": 173,
             "nodeCount": 2,
             "nodeIds": [
               "user",
               "panel"
             ],
-            "nodeSpanPx": 90,
-            "spaceAboveNodesPx": 71,
-            "spaceBelowNodesPx": 19
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
           },
           {
             "frameId": "lane-1",
-            "heightPx": 180,
-            "nodeCount": 6,
+            "heightPx": 173,
+            "nodeCount": 2,
             "nodeIds": [
-              "api",
-              "l1",
-              "probe",
-              "l2",
-              "fuse",
-              "genval"
+              "oos",
+              "no_docs"
             ],
-            "nodeSpanPx": 90,
-            "spaceAboveNodesPx": 71,
-            "spaceBelowNodesPx": 19
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
           },
           {
             "frameId": "lane-2",
-            "heightPx": 180,
+            "heightPx": 173,
+            "nodeCount": 6,
+            "nodeIds": [
+              "api",
+              "load",
+              "intent",
+              "retrieve",
+              "rerank",
+              "generate"
+            ],
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
+          },
+          {
+            "frameId": "lane-3",
+            "heightPx": 173,
             "nodeCount": 3,
             "nodeIds": [
-              "oos",
+              "requery",
               "clarify",
-              "norel"
+              "no_relevant"
             ],
-            "nodeSpanPx": 90,
-            "spaceAboveNodesPx": 71,
-            "spaceBelowNodesPx": 19
+            "nodeSpanPx": 86,
+            "spaceAboveNodesPx": 68,
+            "spaceBelowNodesPx": 18
           }
         ],
         "minimumProjectedNodeTextPx": 8,
         "minimumProjectedNonEdgeTextPx": 8,
         "minimumProjectedEdgeTextPx": 8,
-        "minimumProjectedNodeText": "选定档案库",
+        "minimumProjectedNodeText": "本页历史 + 档案库",
         "minimumProjectedNodeTextDetail": "context",
         "minimumProjectedNodeTextOwner": {
           "kind": "node",
@@ -1207,7 +1351,7 @@
     "contactSheet": null
   },
   "sidecars": {
-    "receipt": "kraq-rag-graph.browser-check.json",
+    "receipt": "kraq-ask-graph.browser-check.json",
     "files": []
   }
 }
