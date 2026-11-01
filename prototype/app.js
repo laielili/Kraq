@@ -1285,6 +1285,17 @@
   renderBranches();
   renderBanner();
   wire();
+  // 右栏底栏顶边与输入区顶边对齐（输入框长高时同步）
+  (function () {
+    var composer = document.querySelector('.composer');
+    var foot = document.querySelector('.trace-foot');
+    if (!composer || !foot || typeof ResizeObserver !== 'function') return;
+    var syncFootHeight = function () {
+      foot.style.height = composer.getBoundingClientRect().height + 'px';
+    };
+    new ResizeObserver(syncFootHeight).observe(composer);
+    syncFootHeight();
+  })();
   // 演示脚本与自动化走查用的句柄（不影响界面）
   window.Kraq = { state: S, send: send, stop: stop, switchKb: switchKb, submitClip: submitClip };
   $('#ask-input').focus();
