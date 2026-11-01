@@ -129,7 +129,8 @@ FAQ_PATTERNS: Tuple[re.Pattern[str], ...] = tuple(
 
 def classify_intent(text: str) -> str:
     """Rule-based fallback, binary: any knowledge-question pattern -> FAQ,
-    otherwise OUT_OF_SCOPE. Mirrors the LLM INTENT_SYSTEM label set."""
+    otherwise OUT_OF_SCOPE. CONTINUATION 需要看会话历史，规则层不推断；
+    意图模型不可用时该分支不会出现。"""
     normalized = text.strip().lower()
     if not normalized:
         return "OUT_OF_SCOPE"

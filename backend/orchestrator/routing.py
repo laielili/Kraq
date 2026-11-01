@@ -1,6 +1,7 @@
 """两级路由（spec §0.6-C6/C7/C8）。判据是数据，不是散在 run_ask 里的 if 链。
 
 L1 `select_pipeline` —— 选哪条管线。当前只有 rag 与 out_of_scope 两个出口；
+  CONTINUATION 仍归 rag，但形成独立分支（跳过 L2 澄清闸门、生成带会话历史）。
   将来接 data / search 就是往 `PIPELINE_DECISIONS` 加一行，调用方零改动。
   刻意不预先写 data 管线判据：那条管线尚不存在，正则无消费者。
 L2 `decide_rag_branch` —— RAG 内部走哪条线。分两张表：
@@ -22,6 +23,7 @@ from .envelope import PIPELINE_RAG
 # ---------------- 出口名 ----------------
 BRANCH_FULL_RAG = "full_rag"
 BRANCH_CLARIFY = "clarify"
+BRANCH_CONTINUATION = "continuation"
 BRANCH_NO_DOCS = "no_docs"
 BRANCH_NO_RELEVANT = "no_relevant"
 BRANCH_OUT_OF_SCOPE_ANSWER = "out_of_scope_answer"
@@ -33,7 +35,8 @@ DECIDED_BY_RULE = "rule"
 
 INTENT_FAQ = "FAQ"
 INTENT_OUT_OF_SCOPE = "OUT_OF_SCOPE"
-VALID_INTENTS: Tuple[str, ...] = (INTENT_FAQ, INTENT_OUT_OF_SCOPE)
+INTENT_CONTINUATION = "CONTINUATION"
+VALID_INTENTS: Tuple[str, ...] = (INTENT_FAQ, INTENT_OUT_OF_SCOPE, INTENT_CONTINUATION)
 
 
 @dataclass
@@ -61,6 +64,8 @@ class Evidence:
 PIPELINE_DECISIONS: Dict[str, Tuple[str, str]] = {
     INTENT_FAQ: (PIPELINE_RAG, BRANCH_FULL_RAG),
     INTENT_OUT_OF_SCOPE: (PIPELINE_RAG, BRANCH_OUT_OF_SCOPE_ANSWER),
+    # 澄清后的信息补充：仍是 RAG 管线，但走独立分支（跳过 L2 澄清闸门、生成带历史）
+    INTENT_CONTINUATION: (PIPELINE_RAG, BRANCH_CONTINUATION),
 }
 
 

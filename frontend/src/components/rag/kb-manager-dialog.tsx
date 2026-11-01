@@ -40,11 +40,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Slider } from '@/components/ui/slider';
-import { Textarea } from '@/components/ui/textarea';
-import { cn } from '@/lib/utils';
+import { Textarea } from '@/components/ui/textarea';import { cn } from '@/lib/utils';
+import { ChunkingFields } from '@/components/rag/chunking-fields';
 import type {
   ChunkingCfg,
+  ChunkingSchemaResp,
   EndpointConfig,
   KbEmbeddingCfg,
   KbSettings,
@@ -60,8 +60,26 @@ export interface KbSummary {
 
 const DEFAULT_KB_ID = 'default';
 
-const DEFAULT_CHUNKING_LOCAL: ChunkingCfg = { maxChars: 600, overlap: 50 };
+/** 新建库的默认切块：镜像 backend/common.py 的 KB_DEFAULT_CHUNKING */
+const DEFAULT_CHUNKING_LOCAL: ChunkingCfg = {
+  strategy: 'recursive',
+  maxChars: 600,
+  overlap: 50,
+  params: { preset: 'zh' },
+};
 
+/** 逐字段比较太碎（策略换了参数必须同批生效），整份配置一次比较、一次保存 */
+function chunkingEquals(a: ChunkingCfg, b: ChunkingCfg): boolean {
+  const pa = a.params ?? {};
+  const pb = b.params ?? {};
+  const keys = new Set([...Object.keys(pa), ...Object.keys(pb)]);
+  for (const k of keys) {
+    if (JSON.stringify(pa[k]) !== JSON.stringify(pb[k])) return false;
+  }
+  return (
+    a.strategy === b.strategy && a.maxChars === b.maxChars && a.overlap === b.overlap
+  );
+}
 /** 示例问题的槽位数与单条长度上限，与后端 _norm_suggestions 一致 */
 const SUGGESTION_COUNT = 4;
 const SUGGESTION_MAX_CHARS = 200;
@@ -137,14 +155,31 @@ async function fetchKbSettings(kbId: string): Promise<KbSettings | null> {
         model: data.embedding?.model ?? '',
       },
       chunking: {
+        strategy: data.chunking?.strategy ?? DEFAULT_CHUNKING_LOCAL.strategy,
         maxChars: data.chunking?.maxChars ?? 600,
         overlap: data.chunking?.overlap ?? 50,
+        params:
+          data.chunking?.params && typeof data.chunking.params === 'object'
+            ? data.chunking.params
+            : {},
       },
       description: data.description ?? '',
       suggestions: Array.isArray(data.suggestions)
         ? data.suggestions.filter((s): s is string => typeof s === 'string')
         : [],
     };
+  } catch {
+    return null;
+  }
+}
+
+/** 切块策略与参数控件的元数据：来自后端 UI_SCHEMA，前端不写死策略清单 */
+async function fetchChunkingSchema(): Promise<ChunkingSchemaResp | null> {
+  try {
+    const res = await fetch('/api/chunking/schema');
+    if (!res.ok) return null;
+    const data = (await res.json()) as ChunkingSchemaResp;
+    return Array.isArray(data?.strategies) ? data : null;
   } catch {
     return null;
   }
@@ -188,11 +223,10 @@ export function KbManagerDialog({
   // 库配置面板数据（GET /api/kbs/{kbId}/settings）
   const [kbSettings, setKbSettings] = useState<KbSettings | null>(null);
   const [kbSettingsLoading, setKbSettingsLoading] = useState(false);
-  // 逐控件草稿（一段一存）
+  // 逐控件草稿（一段一存）；切块整份一存，见 chunkingEquals
   const [endpointDraft, setEndpointDraft] = useState<string | null>(null);
   const [modelDraft, setModelDraft] = useState('');
-  const [maxCharsDraft, setMaxCharsDraft] = useState(600);
-  const [overlapDraft, setOverlapDraft] = useState(50);
+  const [chunkDraft, setChunkDraft] = useState<ChunkingCfg>(DEFAULT_CHUNKING_LOCAL);
   const [descDraft, setDescDraft] = useState('');
   const [sugDrafts, setSugDrafts] = useState<string[]>(
     () => toSuggestionDrafts([]),
@@ -207,6 +241,17 @@ export function KbManagerDialog({
       setLocalError(null);
     }
   }, [open]);
+
+  // 策略清单只在弹窗打开时取一次；取失败保持 null，控件退化为"只有滑块"而不是报错
+  const [chunkSchema, setChunkSchema] = useState<ChunkingSchemaResp | null>(null);
+  useEffect(() => {
+    if (open && chunkSchema == null) {
+      void fetchChunkingSchema().then((s) => setChunkSchema(s));
+    }
+  }, [open, chunkSchema]);
+
+  const strategyLabel = (cfg: ChunkingCfg) =>
+    chunkSchema?.strategies.find((s) => s.id === cfg.strategy)?.label ?? cfg.strategy;
 
   useEffect(() => {
     if (open && settingsFor) {
@@ -324,8 +369,7 @@ export function KbManagerDialog({
   function applyDrafts(s: KbSettings | null) {
     setEndpointDraft(s?.embedding.endpointId ?? null);
     setModelDraft(s?.embedding.model ?? '');
-    setMaxCharsDraft(s?.chunking.maxChars ?? DEFAULT_CHUNKING_LOCAL.maxChars);
-    setOverlapDraft(s?.chunking.overlap ?? DEFAULT_CHUNKING_LOCAL.overlap);
+    setChunkDraft(s?.chunking ?? DEFAULT_CHUNKING_LOCAL);
     setDescDraft(s?.description ?? '');
     setSugDrafts(toSuggestionDrafts(s?.suggestions));
   }
@@ -354,20 +398,11 @@ export function KbManagerDialog({
     setLocalError(null);
     try {
       // 「保存 & 重新嵌入」语义：切块草稿与本库配置不一致时先保存，再重嵌
-      if (
-        kbSettings &&
-        (maxCharsDraft !== kbSettings.chunking.maxChars ||
-          overlapDraft !== kbSettings.chunking.overlap)
-      ) {
-        await onSaveSettings(confirmReembed.kbId, {
-          chunking: { maxChars: maxCharsDraft, overlap: overlapDraft },
-        });
+      if (kbSettings && !chunkingEquals(chunkDraft, kbSettings.chunking)) {
+        await onSaveSettings(confirmReembed.kbId, { chunking: chunkDraft });
         const s = await fetchKbSettings(confirmReembed.kbId);
         setKbSettings(s);
-        if (s) {
-          setMaxCharsDraft(s.chunking.maxChars);
-          setOverlapDraft(s.chunking.overlap);
-        }
+        if (s) applyDrafts(s);
       }
       await onReembed(confirmReembed.kbId, setReembedProgress);
       setConfirmReembed(null);
@@ -646,39 +681,14 @@ export function KbManagerDialog({
             </div>
           </div>
 
-          {/* per-KB 必填：切块 */}
+          {/* per-KB 必填：切块（策略 + 策略专属参数 + 块长/重叠） */}
           <div className="space-y-2.5 rounded-md border bg-sidebar/30 p-3">
             <p className="font-serif text-xs font-semibold">切块（本库专用）</p>
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <span>块最大字符</span>
-                <span className="font-mono">{newChunking.maxChars}</span>
-              </div>
-              <Slider
-                value={[newChunking.maxChars]}
-                min={200}
-                max={2000}
-                step={50}
-                onValueChange={(v) =>
-                  setNewChunking((f) => ({ ...f, maxChars: v[0] ?? 600 }))
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <span>相邻重叠</span>
-                <span className="font-mono">{newChunking.overlap}</span>
-              </div>
-              <Slider
-                value={[newChunking.overlap]}
-                min={0}
-                max={200}
-                step={10}
-                onValueChange={(v) =>
-                  setNewChunking((f) => ({ ...f, overlap: v[0] ?? 50 }))
-                }
-              />
-            </div>
+            <ChunkingFields
+              schema={chunkSchema}
+              value={newChunking}
+              onChange={setNewChunking}
+            />
           </div>
 
           {localError && (
@@ -966,88 +976,33 @@ export function KbManagerDialog({
                 配置读取中…
               </div>
             ) : (
-              <>
-                {/* 块最大字符一段 */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span>块最大字符</span>
-                    <span className="font-mono">{maxCharsDraft}</span>
-                  </div>
-                  <Slider
-                    value={[maxCharsDraft]}
-                    min={200}
-                    max={2000}
-                    step={50}
-                    onValueChange={(v) => setMaxCharsDraft(v[0] ?? 600)}
-                  />
-                  <div className="flex justify-end">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 gap-1 text-xs"
-                      disabled={
-                        savingKey != null ||
-                        maxCharsDraft === kbSettings.chunking.maxChars
-                      }
-                      onClick={() =>
-                        void savePatch('maxChars', {
-                          chunking: {
-                            maxChars: maxCharsDraft,
-                            overlap: kbSettings.chunking.overlap,
-                          },
-                        })
-                      }
-                    >
-                      {savingKey === 'maxChars' ? (
-                        <Loader2 className="size-3 animate-spin" />
-                      ) : (
-                        <Pencil className="size-3" />
-                      )}
-                      保存
-                    </Button>
-                  </div>
+              <div className="space-y-2.5">
+                <ChunkingFields
+                  schema={chunkSchema}
+                  value={chunkDraft}
+                  onChange={setChunkDraft}
+                  disabled={savingKey != null}
+                />
+                <div className="flex justify-end">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1 text-xs"
+                    disabled={
+                      savingKey != null ||
+                      chunkingEquals(chunkDraft, kbSettings.chunking)
+                    }
+                    onClick={() => void savePatch('chunking', { chunking: chunkDraft })}
+                  >
+                    {savingKey === 'chunking' ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <Pencil className="size-3" />
+                    )}
+                    保存
+                  </Button>
                 </div>
-                {/* 相邻重叠一段 */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span>相邻重叠</span>
-                    <span className="font-mono">{overlapDraft}</span>
-                  </div>
-                  <Slider
-                    value={[overlapDraft]}
-                    min={0}
-                    max={200}
-                    step={10}
-                    onValueChange={(v) => setOverlapDraft(v[0] ?? 50)}
-                  />
-                  <div className="flex justify-end">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 gap-1 text-xs"
-                      disabled={
-                        savingKey != null ||
-                        overlapDraft === kbSettings.chunking.overlap
-                      }
-                      onClick={() =>
-                        void savePatch('overlap', {
-                          chunking: {
-                            maxChars: kbSettings.chunking.maxChars,
-                            overlap: overlapDraft,
-                          },
-                        })
-                      }
-                    >
-                      {savingKey === 'overlap' ? (
-                        <Loader2 className="size-3 animate-spin" />
-                      ) : (
-                        <Pencil className="size-3" />
-                      )}
-                      保存
-                    </Button>
-                  </div>
-                </div>
-              </>
+              </div>
             )}
           </div>
 
@@ -1163,13 +1118,17 @@ export function KbManagerDialog({
               {reembedProgress ? (
                 <>
                   已重新嵌入 {reembedProgress.done}/{reembedProgress.total}{' '}
-                  篇（模型 {reembedProgress.model || '本库配置'}），每批完成即落盘生效。
+                  篇（模型 {reembedProgress.model || '本库配置'}）：按当前策略重切{' '}
+                  {reembedProgress.rechunked ?? 0} 个来源，另有{' '}
+                  {reembedProgress.keptNoRaw ?? 0} 篇没有留存原文、只重嵌不重切。每批完成即落盘生效。
                 </>
               ) : (
                 <>
-                  将对本库{' '}
+                  将先清空本库向量集合，再按当前切块策略「
+                  {strategyLabel(chunkDraft)}」从留存原文重切，并对本库{' '}
                   {kbs.find((k) => k.kbId === confirmReembed?.kbId)?.docCount ?? 0}{' '}
-                  份档案全部强制重新计算向量（使用本库配置的嵌入端点/模型），分批执行、逐批落盘，耗时取决于档案规模。切块不做变更。
+                  份档案全部强制重新计算向量（使用本库配置的嵌入端点/模型），分批执行、逐批落盘。
+                  本次改造前入库、没有留存原文的档案不会被重切，只会被重嵌。重嵌期间本库向量为空，提问退到 BM25 单腿。
                 </>
               )}
             </AlertDialogDescription>

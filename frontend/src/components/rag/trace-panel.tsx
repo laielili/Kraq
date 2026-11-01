@@ -6,6 +6,7 @@ import {
   ListOrdered,
   Loader2,
   MessagesSquare,
+  RefreshCw,
   Search,
   ShieldCheck,
   Target,
@@ -23,6 +24,7 @@ import type {
 const INTENT_LABELS: Record<IntentLabel, string> = {
   FAQ: '知识问答',
   OUT_OF_SCOPE: '超出范围',
+  CONTINUATION: '澄清-信息补充',
 };
 
 const FINAL_BY_LABELS: Record<string, string> = {
@@ -32,6 +34,7 @@ const FINAL_BY_LABELS: Record<string, string> = {
 
 const STAGES: Array<{ name: StageName; label: string; icon: typeof Target }> = [
   { name: 'intent', label: '意图识别', icon: Target },
+  { name: 'requery', label: '查询重写', icon: RefreshCw },
   { name: 'retrieve', label: '混合检索', icon: Search },
   { name: 'rerank', label: '重排序', icon: ListOrdered },
   { name: 'generate', label: '引用生成', icon: MessagesSquare },
@@ -168,12 +171,42 @@ export function TracePanel({
                     {trace.intentDetail.threshold?.toFixed(2)}，进入 Clarify
                   </p>
                 )}
+                {trace.intentDetail?.continuation && (
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    承接上一轮澄清，生成时附带会话历史
+                  </p>
+                )}
                 {trace.intentDetail?.finalBy && (
                   <p className="mt-1 font-mono text-[10px] text-muted-foreground">
                     最终：{FINAL_BY_LABELS[trace.intentDetail.finalBy] ?? trace.intentDetail.finalBy}
                   </p>
                 )}
               </StageCard>
+
+              {trace.intentDetail?.continuation && (
+                <StageCard
+                  stage="requery"
+                  label="查询重写"
+                  icon={RefreshCw}
+                  current={active}
+                  done={!!trace.requery}
+                >
+                  {trace.requery ? (
+                    <div className="space-y-1">
+                      <p className="text-[11px] leading-5 text-foreground/90">
+                        {trace.requery.query || '—'}
+                      </p>
+                      {trace.requery.fallback && (
+                        <p className="text-[10px] text-accent">
+                          模型重写失败，已回落为“上一轮问题 + 本轮补充”
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">等待重写…</p>
+                  )}
+                </StageCard>
+              )}
 
               <StageCard
                 stage="retrieve"
@@ -186,8 +219,18 @@ export function TracePanel({
                   <div className="space-y-2">
                     {retrieval.top1Score != null && retrieval.threshold != null && (
                       <p className="font-mono text-[10px] text-muted-foreground">
-                        最高分数 {retrieval.top1Score.toFixed(4)} 高于阈值{' '}
-                        {retrieval.threshold.toFixed(2)}，不做 Clarify
+                        {trace.intentDetail?.continuation ? (
+                          <>
+                            澄清补充分支：跳过澄清闸门（最高分数{' '}
+                            {retrieval.top1Score.toFixed(4)}，阈值{' '}
+                            {retrieval.threshold.toFixed(2)}）
+                          </>
+                        ) : (
+                          <>
+                            最高分数 {retrieval.top1Score.toFixed(4)} 高于阈值{' '}
+                            {retrieval.threshold.toFixed(2)}，不做 Clarify
+                          </>
+                        )}
                       </p>
                     )}
                     <div>

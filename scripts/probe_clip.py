@@ -47,7 +47,7 @@ def main() -> int:
         print(f"作者：{result.get('author') or '—'}")
         print("—— 正文预览 ——")
         print(content[: args.chars])
-    # 探针只读：到这里结束，不调用 chunk_text / add_docs_batch，档案柜与 tasks.json 不变
+    # 探针只读：到这里结束，不调用 split_document / add_docs_batch，档案柜与 tasks.json 不变
     return 0
 
 

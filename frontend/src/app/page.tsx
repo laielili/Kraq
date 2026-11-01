@@ -92,9 +92,10 @@ export default function Home() {
 
   const configRef = useRef<RagConfig>(DEFAULT_CONFIG);
   const currentKbIdRef = useRef('default');
+  const messagesRef = useRef<ChatMessage[]>([]);
   const streamingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
-  // 思考计时（跨 applyEvent/send 两个闭包共享）
+  // 回答计时（跨 applyEvent/send 两个闭包共享）：起点 = 用户发送，终点 = done 帧
   const thinkingStartRef = useRef<number | null>(null);
   const thinkingEndRef = useRef<number | null>(null);
   // 会话 ID：页面生命周期内稳定（同一页面多次提问共用），刷新/关闭即作废。
@@ -108,6 +109,11 @@ export default function Home() {
   useEffect(() => {
     configRef.current = config ?? DEFAULT_CONFIG;
   }, [config]);
+
+  // send 的依赖里没有 messages；用 ref 取“发送前”的完整会话，避免闭包旧值。
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const currentKbId = currentKbIdState;
   useEffect(() => {
@@ -273,6 +279,21 @@ export default function Home() {
     // 让它们混进来会把别的 stage 名当成 RAG 的阶段画进追溯面板。
     if (ev.pipeline !== 'rag') return;
     if (ev.type === 'stage') {
+      if (ev.stage === 'intent') {
+        // 把本次路由挂到当前助手消息上：回答底部据此决定是否标注“不作保留”。
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last && last.role === 'assistant') {
+            next[next.length - 1] = {
+              ...last,
+              intent: ev.data.intent,
+              clarify: Boolean(ev.data.clarify),
+            };
+          }
+          return next;
+        });
+      }
       setTrace((prev) => {
         const base: TraceState = prev ?? { current: ev.stage };
         switch (ev.stage) {
@@ -283,6 +304,8 @@ export default function Home() {
               intentDetail: ev.data,
               current: 'intent',
             };
+          case 'requery':
+            return { ...base, requery: ev.data, current: 'requery' };
           case 'retrieve':
             return {
               ...base,
@@ -308,8 +331,6 @@ export default function Home() {
       return;
     }
     if (ev.type === 'thinking') {
-      if (thinkingStartRef.current == null) thinkingStartRef.current = Date.now();
-      thinkingEndRef.current = Date.now();
       setMessages((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -335,6 +356,7 @@ export default function Home() {
       return;
     }
     if (ev.type === 'done') {
+      thinkingEndRef.current = Date.now();
       setMessages((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -347,7 +369,7 @@ export default function Home() {
             thinking: last.thinking ?? '',
             thinkingMs:
               thinkingStartRef.current != null
-                ? (thinkingEndRef.current ?? thinkingStartRef.current) -
+                ? (thinkingEndRef.current ?? Date.now()) -
                   thinkingStartRef.current
                 : undefined,
           };
@@ -380,12 +402,16 @@ export default function Home() {
       streamingRef.current = true;
       setStreaming(true);
       setTrace(null);
+      // 澄清后的补充要靠历史：带上本会话已完成的 user/assistant 轮次（不含本轮）。
+      const history = messagesRef.current
+        .filter((m) => !m.streaming && !m.error && m.content.trim())
+        .map((m) => ({ role: m.role, content: m.content }));
       setMessages((prev) => [
         ...prev,
         { role: 'user', content: question },
         { role: 'assistant', content: '', streaming: true },
       ]);
-      thinkingStartRef.current = null;
+      thinkingStartRef.current = Date.now();
       thinkingEndRef.current = null;
 
       const controller = new AbortController();
@@ -400,6 +426,7 @@ export default function Home() {
             config: {},
             kbId: currentKbIdRef.current,
             sessionId: sessionIdRef.current,
+            history,
           }),
           signal: controller.signal,
         });

@@ -14,7 +14,7 @@ import trafilatura
 from lxml import html as lh
 
 from .common import CancelledError, decode_bytes
-from .document_converter import convert_bytes
+from .document_converter import convert_bytes, text_to_markdown
 
 # ============================================================
 # 通用工具
@@ -388,6 +388,18 @@ def extract_document(body: bytes, url: str, mimetype: str,
         "platform": "web",
         "format": ext or (mimetype.split("/")[-1] if mimetype else "unknown"),
     }
+
+
+def extracted_to_markdown(extracted: Dict[str, Any], title: str = "") -> str:
+    """把提取结果统一成可留存、可重切的 Markdown。
+
+    只有网页分支的 content 是 trafilatura 纯文本；平台提取器自己产 Markdown，
+    PDF/Office 分支经 markitdown 也已是 Markdown，两者原样返回。
+    """
+    content = str(extracted.get("content") or "")
+    if extracted.get("format") != "html":
+        return content
+    return text_to_markdown(content, title or str(extracted.get("title") or ""))
 
 
 # ============================================================

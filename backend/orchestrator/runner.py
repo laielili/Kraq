@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, Dict, List, Mapping, Optional
 
 from .envelope import PIPELINE_RAG
 from .rag_graph import build_graph
@@ -32,10 +32,16 @@ async def astream_frames(
     question: str,
     kb_id: str = "",
     session_id: str = "",
+    history: Optional[List[Mapping[str, str]]] = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     try:
         async for frame in get_app().astream(
-            {"question": question, "kb_id": kb_id, "session_id": session_id},
+            {
+                "question": question,
+                "kb_id": kb_id,
+                "session_id": session_id,
+                "history": [dict(m) for m in (history or [])],
+            },
             stream_mode="custom",
         ):
             yield frame

@@ -27,8 +27,9 @@ from .store import (
     new_doc_id,
     update_link_clip_task,
 )
-from .link_extractor import extract_content
-from .chunker import chunk_text
+from .link_extractor import extract_content, extracted_to_markdown
+from .raw_store import new_source_id, save_raw
+from .splitters import split_document
 from .common import CancelledError, now_iso
 
 logger = logging.getLogger(__name__)
@@ -138,15 +139,15 @@ async def run_link_clip_task(ctx: TaskContext, emitter: _ProgressEmitter) -> dic
     await update_link_clip_task(ctx.task_id, page_title=extracted.get("title"))
 
     alive()
-    content_text = extracted.get("content") or ""
+    content_text = extracted_to_markdown(
+        extracted, extracted.get("title") or ctx.url[:50]
+    )
     if not content_text:
         raise RuntimeError("提取内容为空")
 
     settings = get_kb_settings(ctx.kb_id)
-    chunking = settings.get("chunking") or {}
-    max_chars = int(chunking.get("maxChars") or 600)
-    overlap = int(chunking.get("overlap") or 50)
-    pieces = chunk_text(str(content_text), max_chars, overlap)
+    source_id = save_raw(ctx.kb_id, new_source_id(), content_text)
+    pieces = split_document(content_text, settings.get("chunking"))
 
     await update_link_clip_task(
         ctx.task_id, stage="chunking", progress=60, detail=f"切成 {len(pieces)} 块"
@@ -166,6 +167,7 @@ async def run_link_clip_task(ctx: TaskContext, emitter: _ProgressEmitter) -> dic
     new_docs = [
         {
             "id": new_doc_id(),
+            "sourceId": source_id,
             "title": f"片段 {i + 1}",
             "content": str(p["text"]),
             "embeddingMeta": {"upserted": False, "source": "link-clip", **extracted_meta},

@@ -1,4 +1,4 @@
-export type IntentLabel = 'FAQ' | 'OUT_OF_SCOPE';
+export type IntentLabel = 'FAQ' | 'OUT_OF_SCOPE' | 'CONTINUATION';
 
 export interface KbDocMeta {
   id: string;
@@ -6,10 +6,28 @@ export interface KbDocMeta {
   content: string;
   createdAt: string;
   embedded: boolean;
+  /** 本库是否留存了该来源的 Markdown 原文：决定「重新嵌入」能否重切它 */
+  hasSource?: boolean;
 }
 
 /** 「重新嵌入」后台任务快照（POST/GET /api/kbs/{kbId}/reembed） */
 export interface ReembedJob {
+  kbId: string;
+  status: 'idle' | 'running' | 'completed' | 'failed';
+  total: number;
+  done: number;
+  error: string | null;
+  model?: string;
+  /** 按当前策略重切成功的来源数（有留存原文的） */
+  rechunked?: number;
+  /** 改造前入库、无留存原文，只做重嵌的来源数 */
+  keptNoRaw?: number;
+  /** 向量集合是否已清空：为 true 时本库提问退到 BM25 单腿 */
+  cleared?: boolean;
+}
+
+/** 「补算待向量化文档」后台任务快照（POST/GET /api/kbs/{kbId}/embed） */
+export interface EmbedJob {
   kbId: string;
   status: 'idle' | 'running' | 'completed' | 'failed';
   total: number;
@@ -80,13 +98,48 @@ export interface IntentStageDetail {
   finalBy?: 'llm' | 'rule';
   /** CLARIFY 分支：top-1 向量余弦分低于阈值，触发澄清式生成 */
   clarify?: boolean;
+  /** CONTINUATION 分支：本轮是对上一轮澄清的补充，生成时会带上会话历史 */
+  continuation?: boolean;
   top1Score?: number;
   threshold?: number;
 }
 
+/** 切块策略 id，与后端 `splitters.STRATEGIES` 一一对应 */
+export type ChunkStrategy = 'recursive' | 'character' | 'markdown_header' | 'json';
+
+export type ChunkParamValue = string | string[] | boolean;
+
+/** 策略专属参数；键集合由后端按 STRATEGY_PARAMS 白名单过滤后才回传 */
+export type ChunkParams = Record<string, ChunkParamValue>;
+
+export interface ChunkFieldOption {
+  value: string;
+  label: string;
+}
+
+/** GET /api/chunking/schema 的单个参数控件描述（后端 UI_SCHEMA 是唯一事实源） */
+export type ChunkFieldSchema =
+  | { key: string; label: string; type: 'select'; default: string; options: ChunkFieldOption[] }
+  | { key: string; label: string; type: 'multiselect'; default: string[]; options: ChunkFieldOption[] }
+  | { key: string; label: string; type: 'text'; default: string; placeholder?: string }
+  | { key: string; label: string; type: 'bool'; default: boolean };
+
+export interface ChunkStrategySchema {
+  id: ChunkStrategy;
+  label: string;
+  hint?: string;
+  fields: ChunkFieldSchema[];
+}
+
+export interface ChunkingSchemaResp {
+  strategies: ChunkStrategySchema[];
+}
+
 export interface ChunkingCfg {
+  strategy: ChunkStrategy;
   maxChars: number;
   overlap: number;
+  params: ChunkParams;
 }
 
 export interface RagConfig {
@@ -118,6 +171,7 @@ export type PipelineId = 'rag' | 'data' | 'search';
 
 export type AskEvent =
   | { type: 'stage'; pipeline: PipelineId; stage: 'intent'; data: IntentStageDetail }
+  | { type: 'stage'; pipeline: PipelineId; stage: 'requery'; data: { query: string; fallback?: boolean } }
   | { type: 'stage'; pipeline: PipelineId; stage: 'retrieve'; data: RetrievalTrace & { titles: Record<string, string> } }
   | { type: 'stage'; pipeline: PipelineId; stage: 'rerank'; data: { reranked: RerankedDoc[]; titles: Record<string, string> } }
   | { type: 'stage'; pipeline: PipelineId; stage: 'generate'; data: { model: string } }
@@ -127,12 +181,14 @@ export type AskEvent =
   | { type: 'done'; pipeline: PipelineId; answer: string; sources: SourceDoc[] }
   | { type: 'error'; pipeline: PipelineId; message: string };
 
-export type StageName = 'intent' | 'retrieve' | 'rerank' | 'generate' | 'validate';
+export type StageName = 'intent' | 'requery' | 'retrieve' | 'rerank' | 'generate' | 'validate';
 
 export interface TraceState {
   intent?: IntentLabel;
   /** intent 阶段追溯（LLM 判定 / 规则兜底） */
   intentDetail?: IntentStageDetail | null;
+  /** CONTINUATION 专用：意图模型重写出的检索查询 */
+  requery?: { query: string; fallback?: boolean } | null;
   retrieval?: (RetrievalTrace & { titles: Record<string, string> }) | null;
   reranked?: RerankedDoc[];
   titles?: Record<string, string>;

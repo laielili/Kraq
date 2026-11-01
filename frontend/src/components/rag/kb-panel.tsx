@@ -1,7 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import { ArrowDownToLine, FileText, FolderOpen, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowDownToLine, FileText, FolderOpen, PenLine, Trash2, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
   AlertDialog,
@@ -22,7 +22,22 @@ import {
 } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
-import type { KbDocMeta } from '@/lib/rag/types';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import type {
+  ChunkStrategy,
+  ChunkStrategySchema,
+  ChunkingSchemaResp,
+  EmbedJob,
+  KbDocMeta,
+} from '@/lib/rag/types';
 
 interface KbPanelProps {
   docs: KbDocMeta[];
@@ -51,7 +66,44 @@ export function KbPanel({
   const [error, setError] = useState<string | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkOpen, setLinkOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualTitle, setManualTitle] = useState('');
+  const [manualBody, setManualBody] = useState('');
+  const [manualBusy, setManualBusy] = useState(false);
+  const [embedMode, setEmbedMode] = useState<ChunkStrategy>('recursive');
+  const [strategies, setStrategies] = useState<ChunkStrategySchema[]>([]);
+  const [embedding, setEmbedding] = useState(false);
+  const [embedProgress, setEmbedProgress] = useState<EmbedJob | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const embedInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const [schemaRes, settingsRes] = await Promise.all([
+          fetch('/api/chunking/schema'),
+          fetch(`/api/kbs/${encodeURIComponent(currentKbId)}/settings`),
+        ]);
+        if (!alive) return;
+        if (schemaRes.ok) {
+          const schema = (await schemaRes.json()) as ChunkingSchemaResp;
+          if (Array.isArray(schema.strategies)) setStrategies(schema.strategies);
+        }
+        if (settingsRes.ok) {
+          const settings = (await settingsRes.json()) as {
+            chunking?: { strategy?: ChunkStrategy };
+          };
+          if (settings.chunking?.strategy) setEmbedMode(settings.chunking.strategy);
+        }
+      } catch {
+        // 读取失败保持 recursive 默认值，不阻断档案操作
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [currentKbId]);
 
   function submitLink() {
     const target = linkUrl.trim();
@@ -64,9 +116,71 @@ export function KbPanel({
     setError(null);
   }
 
-  async function uploadFile() {
-    const file = fileInputRef.current?.files?.[0];
-    if (!file || busy) return;
+  async function submitManual() {
+    const content = manualBody.trim();
+    if (!content || manualBusy) return;
+    setManualBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/kb/text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kbId: currentKbId,
+          title: manualTitle.trim(),
+          content,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok || data.error) {
+        throw new Error(data.error ?? '手动录入失败');
+      }
+      setManualOpen(false);
+      setManualTitle('');
+      setManualBody('');
+      await onMutated();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '手动录入失败');
+    } finally {
+      setManualBusy(false);
+    }
+  }
+
+  async function runEmbed() {
+    setEmbedding(true);
+    setEmbedProgress(null);
+    try {
+      const res = await fetch(
+        `/api/kbs/${encodeURIComponent(currentKbId)}/embed`,
+        { method: 'POST' },
+      );
+      const started = (await res.json().catch(() => null)) as EmbedJob | null;
+      if (!res.ok || !started) {
+        throw new Error(started?.error ?? `嵌入请求失败（HTTP ${res.status}）`);
+      }
+      let job = started;
+      setEmbedProgress(job);
+      const deadline = Date.now() + 10 * 60 * 1000;
+      while (job.status === 'running' && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const st = await fetch(
+          `/api/kbs/${encodeURIComponent(currentKbId)}/embed`,
+        );
+        if (!st.ok) throw new Error(`嵌入进度读取失败（HTTP ${st.status}）`);
+        job = (await st.json()) as EmbedJob;
+        setEmbedProgress(job);
+      }
+      if (job.status === 'failed') throw new Error(job.error ?? '嵌入失败');
+      if (job.status === 'running') throw new Error('嵌入超时，请稍后重试');
+      await onMutated();
+    } finally {
+      setEmbedding(false);
+      setEmbedProgress(null);
+    }
+  }
+
+  async function uploadFile(file: File, embedAfter: boolean) {
+    if (busy || embedding) return;
     setBusy(true);
     setError(null);
     try {
@@ -74,18 +188,21 @@ export function KbPanel({
       const fd = new FormData();
       fd.append('file', file);
       fd.append('kbId', currentKbId);
+      if (embedAfter) fd.append('strategy', embedMode);
       const res = await fetch('/api/kb/upload', {
         method: 'POST',
         body: fd,
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok || data.error) throw new Error(data.error ?? '上传失败');
-      if (fileInputRef.current) fileInputRef.current.value = '';
       await onMutated();
+      if (embedAfter) await runEmbed();
     } catch (e) {
       setError(e instanceof Error ? e.message : '上传失败');
     } finally {
       setBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (embedInputRef.current) embedInputRef.current.value = '';
     }
   }
 
@@ -206,7 +323,10 @@ export function KbPanel({
               type="file"
               accept=".txt,.md,.pdf,.docx,.pptx,.xlsx,.epub,.html,.htm,.csv,.json,.xml"
               className="hidden"
-              onChange={() => void uploadFile()}
+              onChange={() => {
+                const file = fileInputRef.current?.files?.[0];
+                if (file) void uploadFile(file, false);
+              }}
             />
             <Button
               variant="outline"
@@ -217,6 +337,21 @@ export function KbPanel({
             >
               <FolderOpen className="size-4" />
               上传档案
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-10 w-14 gap-1 text-xs"
+              onClick={() => {
+                setError(null);
+                setManualOpen(true);
+              }}
+              disabled={busy}
+              aria-label="手动录入"
+              title="手动录入正文"
+            >
+              <PenLine className="size-4" />
+              录入
             </Button>
             <Button
               variant="outline"
@@ -242,9 +377,132 @@ export function KbPanel({
               </Button>
             )}
           </div>
+          <div className="mt-2 flex items-center gap-2">
+            <Select
+              value={embedMode}
+              onValueChange={(v) => setEmbedMode(v as ChunkStrategy)}
+              disabled={busy || embedding || strategies.length === 0}
+            >
+              <SelectTrigger className="h-9 min-w-0 flex-1 text-xs" aria-label="嵌入模式">
+                <span className="shrink-0 text-muted-foreground">嵌入模式</span>
+                <SelectValue placeholder="分隔符递归" />
+              </SelectTrigger>
+              <SelectContent>
+                {strategies.map((s) => (
+                  <SelectItem key={s.id} value={s.id} className="text-xs">
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <input
+              ref={embedInputRef}
+              type="file"
+              accept=".txt,.md,.pdf,.docx,.pptx,.xlsx,.epub,.html,.htm,.csv,.json,.xml"
+              className="hidden"
+              onChange={() => {
+                const file = embedInputRef.current?.files?.[0];
+                if (file) void uploadFile(file, true);
+              }}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 shrink-0 gap-1.5 text-xs"
+              onClick={() => embedInputRef.current?.click()}
+              disabled={busy || embedding}
+              aria-label="上传并嵌入"
+            >
+              <Upload className="size-4" />
+              嵌入
+            </Button>
+          </div>
+          {embedding && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              正在嵌入 {embedProgress?.done ?? 0}/{embedProgress?.total ?? 0}…
+            </p>
+          )}
           {error && <p className="mt-1.5 text-[11px] text-destructive">{error}</p>}
         </div>
       </div>
+
+      {/* 手动录入：正文先规范成 Markdown，再按当前库策略切块入库 */}
+      <Dialog
+        open={manualOpen}
+        onOpenChange={(v) => {
+          if (!v && !manualBusy) {
+            setManualOpen(false);
+            setError(null);
+          }
+        }}
+      >
+        <DialogContent className="w-[min(620px,92vw)] sm:max-w-none">
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitManual();
+            }}
+          >
+            <div className="space-y-1">
+              <DialogTitle className="font-serif text-base">手动录入</DialogTitle>
+              <DialogDescription className="text-xs leading-5">
+                正文会规范成 Markdown 后留存原文，再按当前库的切块策略入库；之后换策略可重切重嵌。
+              </DialogDescription>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="manual-title" className="text-[10px]">
+                标题
+              </Label>
+              <Input
+                id="manual-title"
+                value={manualTitle}
+                onChange={(e) => setManualTitle(e.target.value)}
+                placeholder="留空则用「手动录入」"
+                className="h-8 text-xs"
+                disabled={manualBusy}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="manual-body" className="text-[10px]">
+                正文
+              </Label>
+              <Textarea
+                id="manual-body"
+                value={manualBody}
+                onChange={(e) => setManualBody(e.target.value)}
+                placeholder="粘贴或输入正文…"
+                className="min-h-[240px] text-xs leading-6"
+                disabled={manualBusy}
+              />
+            </div>
+            {error && <p className="text-[11px] text-destructive">{error}</p>}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => {
+                  setManualOpen(false);
+                  setError(null);
+                }}
+                disabled={manualBusy}
+              >
+                取消
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                className="h-8 text-xs"
+                disabled={manualBusy || !manualBody.trim()}
+              >
+                {manualBusy ? '存入中…' : '存入档案柜'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* 笔记阅读窗：A4 竖向比例，标题 + 全文 */}
       <Dialog open={viewing != null} onOpenChange={(v) => !v && setViewing(null)}>
@@ -258,6 +516,9 @@ export function KbPanel({
                 ? viewing.createdAt.slice(0, 16).replace('T', ' ')
                 : ''}
               {viewing?.embedded ? ' · 已向量化' : ' · 待向量化'}
+              {viewing && viewing.hasSource === false
+                ? ' · 无留存原文（重新嵌入只重嵌不重切）'
+                : ''}
             </DialogDescription>
           </div>
           <ScrollArea className="min-h-0 flex-1 pr-2">

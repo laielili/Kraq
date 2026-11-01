@@ -49,6 +49,7 @@ from typing import (
     Literal,
     Mapping,
     Optional,
+    Sequence,
     Tuple,
 )
 
@@ -64,6 +65,8 @@ from .models_client import (
     embed_texts,
     rerank,
 )
+from .raw_store import read_raw
+from .splitters import chunking_fingerprint, split_document
 from .search import (
     bm25_search,
     classify_intent,
@@ -78,6 +81,7 @@ from .store import (
     get_config,
     get_docs,
     mark_embedding_meta,
+    new_doc_id,
     normalize_kb_id,
     replace_docs,
 )
@@ -85,11 +89,20 @@ from .store import (
 INTENT_SYSTEM = (
     "你是知识库问答系统的意图分类器。FAQ=用户想向知识库提问或查找资料，"
     "期望得到基于知识的回答或结果（问题含义模糊也算 FAQ，后续会通过澄清确认）；"
-    "OUT_OF_SCOPE=与知识库问答无关的消息（如闲聊、天气、新闻、写代码）。"
-    "只输出 FAQ 或 OUT_OF_SCOPE 之一。"
+    "OUT_OF_SCOPE=与知识库问答无关的消息（如闲聊、天气、新闻、写代码）；"
+    "CONTINUATION=本轮输入是在补充或回答上一轮助手提出的澄清追问"
+    "（例如上一轮助手问「你想了解 A 还是 B」，本轮答「A」「第二个」「是关于 B 的」），"
+    "而不是提出一个新的知识问题。没有上一轮助手的澄清追问时，不要判为 CONTINUATION。"
+    "只输出 FAQ、OUT_OF_SCOPE 或 CONTINUATION 之一。"
 )
-INTENT_PARSE_RE = re.compile(r"(FAQ|OUT_OF_SCOPE)")
-VALID_INTENTS = ("FAQ", "OUT_OF_SCOPE")
+INTENT_PARSE_RE = re.compile(r"(FAQ|OUT_OF_SCOPE|CONTINUATION)")
+VALID_INTENTS = ("FAQ", "OUT_OF_SCOPE", "CONTINUATION")
+
+REQUERY_SYSTEM = (
+    "你是知识库问答系统的检索查询重写器。用户本轮是在补充或回答上一轮助手提出的澄清追问。"
+    "请结合下面的会话历史，把用户真正想检索的信息写成一段独立、具体、适合知识库检索的中文查询。"
+    "只输出查询本身，不要解释、不要加引号、不要输出标签。"
+)
 
 # 意图生成目标：agent 级模板（config.goalPrompt*），未定制回落 prompts/goal_*_default.md
 _GOAL_FILES: Dict[str, str] = {
@@ -136,18 +149,49 @@ def intent_goal(cfg: Mapping[str, Any], route: str) -> str:
     return _FALLBACK_GOALS[route]
 
 
-async def _intent_llm_invoke(cfg: Mapping[str, Any], question: str, session_id: str = "") -> Optional[str]:
-    """意图阶段配置的端点模型做一次分类，返回合法标签或 None（未配置/失败）。"""
+def _format_history(history: Optional[Sequence[Mapping[str, str]]]) -> str:
+    """会话历史 → 意图提示里的纯文本块（只保留 user/assistant 非空内容）。"""
+    lines: List[str] = []
+    for m in history or ():
+        role = str(m.get("role") or "")
+        content = str(m.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        lines.append(f"{'用户' if role == 'user' else '助手'}：{content}")
+    return "\n".join(lines)
+
+
+async def _intent_llm_invoke(
+    cfg: Mapping[str, Any],
+    question: str,
+    session_id: str = "",
+    *,
+    history: Optional[Sequence[Mapping[str, str]]] = None,
+) -> Optional[str]:
+    """意图阶段配置的端点模型做一次分类，返回合法标签或 None（未配置/失败）。
+
+    CONTINUATION 必须依赖会话历史判断，所以这里把历史与当前输入一起送出；
+    没有历史时不可能判为该标签。
+    """
     ep_i, model_i = _resolve_stage(cfg, "intent")
     if ep_i is None or not model_i:
         return None
+    history_text = _format_history(history)
+    user_text = f"本轮用户输入：{question}\n请只输出意图标签。"
+    if history_text:
+        user_text = (
+            "以下是同一会话的历史对话（按时间顺序）：\n"
+            f"{history_text}\n\n本轮用户输入：{question}\n"
+            "请判断本轮输入是新的知识问题（FAQ）、无关消息（OUT_OF_SCOPE），"
+            "还是对上一轮助手澄清追问的补充（CONTINUATION）。只输出标签。"
+        )
     try:
         text = await chat_invoke(
             ep_i,
             model_i,
             [
                 {"role": "system", "content": INTENT_SYSTEM},
-                {"role": "user", "content": question},
+                {"role": "user", "content": user_text},
             ],
             0.0,
             # qwen3 等思考模型会先输出思考内容，8 tokens 会在标签出现前截断
@@ -163,6 +207,61 @@ async def _intent_llm_invoke(cfg: Mapping[str, Any], question: str, session_id: 
         return None
     label = m.group(1)
     return label if label in VALID_INTENTS else None
+
+async def _requery_for_retrieval(
+    cfg: Mapping[str, Any],
+    question: str,
+    session_id: str = "",
+    *,
+    history: Optional[Sequence[Mapping[str, str]]] = None,
+) -> Tuple[str, bool]:
+    """CONTINUATION 专用：用意图模型把“上一轮澄清 + 本轮补充”重写成独立检索查询。
+
+    返回值 (query, fallback)：模型未配置/失败/输出为空时回落为
+    “上一轮用户问题 + 本轮补充”，只影响检索/重排，不影响生成。
+    """
+    fallback = question
+    for m in reversed(history or ()):
+        if str(m.get("role") or "") == "user":
+            prev = str(m.get("content") or "").strip()
+            if prev and prev != question:
+                fallback = f"{prev}\n{question}"
+            break
+    ep_i, model_i = _resolve_stage(cfg, "intent")
+    if ep_i is None or not model_i:
+        return fallback, True
+    history_text = _format_history(history)
+    user_text = (
+        f"会话历史：\n{history_text}\n\n本轮用户补充：{question}\n\n"
+        "请输出用于知识库检索的独立查询："
+        if history_text
+        else f"本轮用户输入：{question}\n\n请输出用于知识库检索的独立查询："
+    )
+    try:
+        text = await chat_invoke(
+            ep_i,
+            model_i,
+            [
+                {"role": "system", "content": REQUERY_SYSTEM},
+                {"role": "user", "content": user_text},
+            ],
+            0.0,
+            256,
+            think=False,
+            session_id=session_id,
+        )
+    except Exception:
+        return fallback, True
+    query = (text or "").strip()
+    for prefix in ("检索查询：", "独立查询：", "查询：", "Query:", "query:"):
+        if query.startswith(prefix):
+            query = query[len(prefix):].strip()
+    query = query.strip("`'\"“”‘’ \n\t")
+    query = query.splitlines()[0].strip() if query else ""
+    if not query:
+        return fallback, True
+    return query[:500], False
+
 
 RAG_USER_TEMPLATE = "编号资料：\n{contexts}\n\n用户问题：{question}\n\n请基于以上资料回答，并标注引用编号。"
 
@@ -300,7 +399,7 @@ async def compute_missing_vectors(
             vectors[did] = [float(x) for x in raw]
         chroma_store.upsert(kb_id, ids, [vectors[did] for did in ids])
         async with DATA_FILE_LOCK:
-            mark_embedding_meta(kb_id, ids, model, dim)
+            mark_embedding_meta(kb_id, ids, model, dim, chunk_fp=chunking_fingerprint_of(kb_id))
         if on_progress is not None:
             on_progress(len(vectors), total)
     return vectors
@@ -310,10 +409,16 @@ async def compute_missing_vectors(
 # 「重新嵌入」后台任务：内存态进度表（进程重启即失效，届时由 sync_all_background 续算）
 # --------------------------------------------------------------------------
 _REEMBED_JOBS: Dict[str, Dict[str, Any]] = {}
+_EMBED_JOBS: Dict[str, Dict[str, Any]] = {}
 
 
 def get_reembed_job(kb_id: str) -> Optional[Dict[str, Any]]:
     job = _REEMBED_JOBS.get(normalize_kb_id(kb_id))
+    return dict(job) if job else None
+
+
+def get_embed_job(kb_id: str) -> Optional[Dict[str, Any]]:
+    job = _EMBED_JOBS.get(normalize_kb_id(kb_id))
     return dict(job) if job else None
 
 
@@ -330,10 +435,11 @@ def _describe_embed_error(err: Exception, done: int, total: int) -> str:
 
 
 def start_reembed_kb(kb_id: str) -> Dict[str, Any]:
-    """「重新嵌入」入口：登记任务并后台强制重嵌本库全部文档（无视
-    embeddingMeta 旧标记），立即返回 job 快照供前端轮询。
-    不重切块——切块只作用于之后上传的新文件。库不存在抛 KeyError，
-    未配置嵌入端点/模型抛 ValueError。
+    """「重新嵌入」入口：清空本库向量集合，按**当前** chunking 策略与嵌入模型
+    从留存的 Markdown 原文重走一遍切块 + 嵌入，立即返回 job 快照供前端轮询。
+
+    改造前入库、没有留存原文的文档不会被重切（只重嵌），数量在 job.keptNoRaw 里如实报出。
+    库不存在抛 KeyError，未配置嵌入端点/模型抛 ValueError。
     """
     want = normalize_kb_id(kb_id)
     cfg = get_config()
@@ -343,6 +449,9 @@ def start_reembed_kb(kb_id: str) -> Dict[str, Any]:
     running = _REEMBED_JOBS.get(want)
     if running and running.get("status") == "running":
         return dict(running)
+    embedding = _EMBED_JOBS.get(want)
+    if embedding and embedding.get("status") == "running":
+        raise ValueError("该库正在嵌入，请稍后再试")
     docs = get_docs(want)
     job: Dict[str, Any] = {
         "kbId": want,
@@ -350,6 +459,9 @@ def start_reembed_kb(kb_id: str) -> Dict[str, Any]:
         "status": "running",
         "total": len(docs),
         "done": 0,
+        "rechunked": 0,
+        "keptNoRaw": 0,
+        "cleared": False,
         "error": None,
         "startedAt": now_iso(),
     }
@@ -360,6 +472,134 @@ def start_reembed_kb(kb_id: str) -> Dict[str, Any]:
         return dict(job)
     asyncio.create_task(_run_reembed(want, docs, ep, model, job))
     return dict(job)
+
+
+def _pending_docs(docs: List[Mapping[str, Any]], model: str) -> List[Mapping[str, Any]]:
+    """与 compute_missing_vectors 的 stale 判据保持一致：模型不符或未 upsert。"""
+    out: List[Mapping[str, Any]] = []
+    for d in docs:
+        meta = d.get("embeddingMeta")
+        ok = (
+            isinstance(meta, Mapping)
+            and bool(meta.get("upserted"))
+            and str(meta.get("model") or "") == model
+        )
+        if not ok:
+            out.append(d)
+    return out
+
+
+def start_embed_pending_kb(kb_id: str) -> Dict[str, Any]:
+    """把本库所有待向量化的文档补算一遍（不重切、不清集合）。
+
+    上传/手动录入后调用，让「首次上传」不再依赖下次提问或重启时的懒补算。
+    """
+    want = normalize_kb_id(kb_id)
+    cfg = get_config()
+    ep, model = _resolve_kb_embedding(cfg, want)
+    if ep is None or not model:
+        raise ValueError("该知识库未配置向量嵌入端点/模型，请先在库配置中完成设置")
+    reembed = _REEMBED_JOBS.get(want)
+    if reembed and reembed.get("status") == "running":
+        raise ValueError("该库正在重新嵌入，请稍后再试")
+    running = _EMBED_JOBS.get(want)
+    if running and running.get("status") == "running":
+        return dict(running)
+    pending = _pending_docs(get_docs(want), model)
+    job: Dict[str, Any] = {
+        "kbId": want,
+        "model": model,
+        "status": "running",
+        "total": len(pending),
+        "done": 0,
+        "error": None,
+        "startedAt": now_iso(),
+    }
+    _EMBED_JOBS[want] = job
+    if not pending:
+        job["status"] = "completed"
+        job["finishedAt"] = now_iso()
+        return dict(job)
+    asyncio.create_task(_run_embed_pending(want, ep, model, job))
+    return dict(job)
+
+
+async def _run_embed_pending(
+    kb_id: str,
+    ep: Mapping[str, Any],
+    model: str,
+    job: Dict[str, Any],
+) -> None:
+    def _progress(done: int, total: int) -> None:
+        job["done"] = done
+        job["total"] = total
+
+    try:
+        vectors = await compute_missing_vectors(
+            kb_id, get_docs(kb_id), ep, model, on_progress=_progress
+        )
+        job["done"] = len(vectors)
+        job["status"] = "completed"
+    except Exception as e:
+        job["status"] = "failed"
+        job["error"] = _describe_embed_error(e, job["done"], job["total"])
+    job["finishedAt"] = now_iso()
+
+
+_CHUNK_TITLE_RE = re.compile(r"\s*·\s*第\d+块$")
+
+
+async def _rechunk_from_raw(kb_id: str, docs: List[Mapping[str, Any]], job: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """按当前 chunking 策略，从留存的 Markdown 原文重切本库文档。
+
+    没有原文的来源（本次改造之前入库的旧数据）原样保留并在任务里计数——
+    宁可不切，也不要静默地把用户的库切空。
+    """
+    chunking = get_kb_settings(kb_id).get("chunking") or {}
+    groups: Dict[str, List[Mapping[str, Any]]] = {}
+    out: List[Dict[str, Any]] = []
+    for d in docs:
+        sid = str(d.get("sourceId") or "")
+        if sid:
+            groups.setdefault(sid, []).append(d)
+        else:
+            out.append(dict(d))
+
+    rechunked = kept = 0
+    for sid, group in groups.items():
+        raw = read_raw(kb_id, sid)
+        pieces = split_document(raw, chunking) if raw is not None else []
+        if not pieces:
+            out.extend(dict(d) for d in group)
+            kept += 1
+            continue
+        first = group[0]
+        title = str(first.get("title") or "")
+        base = _CHUNK_TITLE_RE.sub("", title)
+        meta = {
+            k: v
+            for k, v in (first.get("embeddingMeta") or {}).items()
+            if k not in ("model", "dim", "upserted", "chunkFp")
+        }
+        rebuilt: List[Dict[str, Any]] = []
+        for i, piece in enumerate(pieces):
+            rebuilt.append({
+                "id": group[i]["id"] if i < len(group) else new_doc_id(),
+                "sourceId": sid,
+                "title": f"{base} · 第{i + 1}块" if base else f"片段 {i + 1}",
+                "content": str(piece["text"]),
+                "embeddingMeta": {**meta, "upserted": False},
+                "createdAt": first.get("createdAt") or now_iso(),
+            })
+        out.extend(rebuilt)
+        rechunked += 1
+
+    job["rechunked"] = rechunked
+    job["keptNoRaw"] = kept
+    if rechunked:
+        async with DATA_FILE_LOCK:
+            replace_docs(kb_id, out)
+    return out
 
 
 async def _run_reembed(
@@ -374,6 +614,11 @@ async def _run_reembed(
         job["total"] = total
 
     try:
+        # 1) 按当前策略重切（有原文才重切）
+        docs = await _rechunk_from_raw(kb_id, docs, job)
+        # 2) 清空本库向量集合，再全量重嵌：避免旧块 id 残留成孤儿向量
+        chroma_store.drop_collection(kb_id)
+        job["cleared"] = True
         vectors = await compute_missing_vectors(
             kb_id, docs, ep, model, force=True, on_progress=_progress
         )
@@ -431,6 +676,14 @@ async def sync_all_background() -> None:
 # --------------------------------------------------------------------------
 # vector retrieve via Chroma
 # --------------------------------------------------------------------------
+def chunking_fingerprint_of(kb_id: str) -> str | None:
+    """本库当前切块口径的指纹；读不到配置时返回 None（不阻断补算）。"""
+    try:
+        return chunking_fingerprint(get_kb_settings(kb_id).get("chunking"))
+    except Exception:
+        return None
+
+
 def _stale_docs(
     docs: List[Mapping[str, Any]], model: str
 ) -> List[Mapping[str, Any]]:
@@ -573,6 +826,7 @@ async def _generate_stream(
     goal: str,
     cite: bool,
     context_mode: ContextMode = "full",
+    history: Optional[Sequence[Mapping[str, str]]] = None,
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """Stream the generation stage. context_mode decides the whole assembly:
 
@@ -581,6 +835,10 @@ async def _generate_stream(
     - "titles"(CLARIFY)：system = goal 本身（全局提示词里"必须依据编号资料作答
       并标注 [n]"会把澄清拽回答题，这里不拼）；user = 只给编号标题清单 + 问题
     - "none"  (OUT_OF_SCOPE)：system = goal；user 不附任何资料
+
+    `history` 只在 CONTINUATION 路径传入：按
+    [system] + 历史 user/assistant + 本轮 user（含编号资料）组装，
+    让模型能接住上一轮澄清里的指代。
 
     Yields delta/thinking events and finally one internal
     {"type": "done_answer", "answer"} frame (consumed by the caller, never
@@ -600,10 +858,20 @@ async def _generate_stream(
             if cite
             else f"候选资料（仅供判断，不要直接回答）：\n{contexts_block}\n\n用户消息：{question}"
         )
-    messages = [
-        {"role": "system", "content": sys_prompt},
-        {"role": "user", "content": user_text},
+    history_msgs = [
+        {"role": str(m.get("role")), "content": str(m.get("content"))}
+        for m in (history or ())
+        if str(m.get("role")) in ("user", "assistant")
+        and str(m.get("content") or "").strip()
     ]
+    if history_msgs and context_mode == "full":
+        sys_prompt += (
+            "\n\n补充说明：本轮是用户对上一轮澄清的补充。请结合历史对话理解用户所指，"
+            "但最终回答仍必须基于本轮编号资料并标注 [n]。"
+        )
+    messages = [{"role": "system", "content": sys_prompt}]
+    messages.extend(history_msgs)
+    messages.append({"role": "user", "content": user_text})
     chunks: List[str] = []
     try:
         async for content, thinking in chat_stream(

@@ -36,7 +36,12 @@ DEFAULT_STAGES: Dict[str, Dict[str, Any]] = {
 }
 
 # 逐知识库默认（仅用于“重新嵌入/新建校验提示”说明，不作为运行时回退）
-KB_DEFAULT_CHUNKING: Dict[str, Any] = {"maxChars": 600, "overlap": 50}
+KB_DEFAULT_CHUNKING: Dict[str, Any] = {
+    "strategy": "recursive",
+    "maxChars": 600,
+    "overlap": 50,
+    "params": {"preset": "zh"},
+}
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "endpoints": [DEFAULT_ENDPOINT],

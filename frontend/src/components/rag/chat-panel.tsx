@@ -13,19 +13,30 @@ import {
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { CitationText } from './citation-text';
-import type { SourceDoc } from '@/lib/rag/types';
+import type { IntentLabel, SourceDoc } from '@/lib/rag/types';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   /** 模型思考过程（thinking tokens），随流式累积；仅思考型模型会产生 */
   thinking?: string;
-  /** 思考耗时（毫秒），done 时由后端事件时间差计算 */
+  /** 回答耗时（毫秒）：前端从发送到 done 帧的墙钟时间，含检索与校验 */
   thinkingMs?: number;
   sources?: SourceDoc[];
   streaming?: boolean;
   valid?: boolean | null;
   error?: boolean;
+  /** 本轮意图路由：决定底部是否标注“本次回答不作保留” */
+  intent?: IntentLabel;
+  /** 本轮走了 Clarify 分支：下一轮会承接，不标注 */
+  clarify?: boolean;
+}
+
+/** FAQ / OUT_OF_SCOPE 的下一轮按新意图处理；Clarify 与 Continuation 会承接上文。 */
+function showsNotRetained(msg: ChatMessage): boolean {
+  if (msg.streaming || msg.error || !msg.intent) return false;
+  if (msg.clarify || msg.intent === 'CONTINUATION') return false;
+  return true;
 }
 
 /** 思考过程折叠块：流式时显示"正在思考…"，结束后变为"已思考 N 秒"，点击展开/收起 */
@@ -169,6 +180,11 @@ export function ChatPanel({
                         <AlertTriangle className="size-3 text-accent" />
                       )}
                       {msg.valid ? '引用校验通过' : '引用校验未通过，请以资料为准'}
+                    </p>
+                  )}
+                  {showsNotRetained(msg) && (
+                    <p className="mt-2 border-t pt-2 text-[10px] leading-4 text-muted-foreground">
+                      本次回答不作保留——下次回答请完整提问。
                     </p>
                   )}
                 </div>

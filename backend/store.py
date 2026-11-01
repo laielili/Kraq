@@ -16,6 +16,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from .splitters import (
+    DEFAULT_HEADERS as KB_DEFAULT_MARKDOWN_HEADERS,
+    STRATEGIES as CHUNK_STRATEGIES,
+    STRATEGY_PARAMS as CHUNK_STRATEGY_PARAMS,
+)
 from .common import (
     CONFIG_FILE,
     KB_DEFAULT_CHUNKING,
@@ -390,7 +395,19 @@ def _norm_kb_chunking(value: object) -> dict:
     overlap = max(0, min(200, overlap))
     if overlap >= max_chars:
         overlap = max(0, max_chars - 50)
-    return {"maxChars": max_chars, "overlap": overlap}
+    strategy = str(raw.get("strategy") or KB_DEFAULT_CHUNKING["strategy"])
+    if strategy not in CHUNK_STRATEGIES:
+        strategy = str(KB_DEFAULT_CHUNKING["strategy"])
+    params = raw.get("params") if isinstance(raw.get("params"), Mapping) else {}
+    # 只保留该策略认识的键：脏键写进 kb.json 会让前端渲染出无主控件
+    allowed = CHUNK_STRATEGY_PARAMS.get(strategy, ())
+    clean = {k: params[k] for k in allowed if k in params}
+    if strategy == "markdown_header" and not clean.get("headers"):
+        clean["headers"] = list(KB_DEFAULT_MARKDOWN_HEADERS)
+    if strategy == "recursive" and not clean.get("preset"):
+        # 回填默认阶梯预设，让前端读到的是完整配置而不是空对象
+        clean["preset"] = str(KB_DEFAULT_CHUNKING["params"]["preset"])
+    return {"strategy": strategy, "maxChars": max_chars, "overlap": overlap, "params": clean}
 
 
 def _norm_kb_embedding(value: object) -> dict:
@@ -983,7 +1000,9 @@ async def request_cancel_link_clip_task(task_id: str) -> bool:
     return updated is not None
 
 
-def mark_embedding_meta(kb_id: str, doc_ids: List[str], model: str, dim: int) -> None:
+def mark_embedding_meta(
+    kb_id: str, doc_ids: List[str], model: str, dim: int, chunk_fp: str | None = None
+) -> None:
     """Write back embeddingMeta with {model, dim, upserted: true} for the given
     docs of one kb (no vector data). Merged into the existing meta so
     provenance fields (source/filename/images…) survive the marking."""
@@ -999,5 +1018,9 @@ def mark_embedding_meta(kb_id: str, doc_ids: List[str], model: str, dim: int) ->
                 meta = d.get("embeddingMeta")
                 merged = dict(meta) if isinstance(meta, Mapping) else {}
                 merged.update({"model": model, "dim": int(dim), "upserted": True})
+                if chunk_fp:
+                    # 溯源用：记录"这批块是按哪个切块口径产生的"，
+                    # 供前端提示"本库有 N 篇是旧口径切的"。不据此判 stale。
+                    merged["chunkFp"] = chunk_fp
                 d["embeddingMeta"] = merged
     atomic_write_json(KB_FILE, {"kbs": kbs})

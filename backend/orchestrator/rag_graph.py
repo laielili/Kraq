@@ -23,10 +23,12 @@ from langgraph.graph import END, START, StateGraph
 from .envelope import PIPELINE_RAG, Frames
 from .routing import (
     BRANCH_CLARIFY,
+    BRANCH_CONTINUATION,
     BRANCH_FULL_RAG,
     BRANCH_NO_DOCS,
     BRANCH_NO_RELEVANT,
     BRANCH_OUT_OF_SCOPE_ANSWER,
+    INTENT_CONTINUATION,
     INTENT_FAQ,
     INTENT_OUT_OF_SCOPE,
     Evidence,
@@ -41,6 +43,9 @@ class AskState(TypedDict, total=False):
     question: str
     kb_id: str
     session_id: str
+    history: List[Dict[str, str]]
+    retrieval_query: str
+    continuation: bool
     cfg: Dict[str, Any]
     docs: List[Mapping[str, Any]]
     docs_by_id: Dict[str, Mapping[str, Any]]
@@ -96,15 +101,36 @@ async def n_load(state: AskState) -> Dict[str, Any]:
 async def n_intent(state: AskState) -> Dict[str, Any]:
     w = get_stream_writer()
     cfg = state["cfg"]
-    llm_label = await P._intent_llm_invoke(cfg, state["question"])
+    history = state.get("history") or []
+    llm_label = await P._intent_llm_invoke(
+        cfg, state["question"], state.get("session_id", ""), history=history
+    )
     rule_label = None if llm_label else P.classify_intent(state["question"])
     route = select_pipeline(llm_label=llm_label, rule_label=rule_label)
-    intent = INTENT_OUT_OF_SCOPE if route.branch == BRANCH_OUT_OF_SCOPE_ANSWER else INTENT_FAQ
-    detail = {"finalBy": route.decided_by, "intent": intent}
+    continuation = route.branch == BRANCH_CONTINUATION
+    if continuation:
+        intent = INTENT_CONTINUATION
+    elif route.branch == BRANCH_OUT_OF_SCOPE_ANSWER:
+        intent = INTENT_OUT_OF_SCOPE
+    else:
+        intent = INTENT_FAQ
+    detail: Dict[str, Any] = {"finalBy": route.decided_by, "intent": intent}
+    if continuation:
+        detail["continuation"] = True
+    # continuation 的检索查询由 requery 节点用意图模型重写；其余分支就是原问题。
+    retrieval_query = state["question"]
     w(_frames(state).stage("intent", detail))
     gen_ep, gen_model = P._resolve_stage(cfg, "generate")
-    return {"intent": intent, "detail": detail, "gen_ep": gen_ep, "gen_model": gen_model,
-            "branch": route.branch, "halt": gen_ep is None}
+    return {
+        "intent": intent,
+        "detail": detail,
+        "gen_ep": gen_ep,
+        "gen_model": gen_model,
+        "branch": route.branch,
+        "continuation": continuation,
+        "retrieval_query": retrieval_query,
+        "halt": gen_ep is None,
+    }
 
 
 async def n_answer_out_of_scope(state: AskState) -> Dict[str, Any]:
@@ -127,27 +153,46 @@ async def n_answer_out_of_scope(state: AskState) -> Dict[str, Any]:
     return {"answer": answer.strip(), "sources": [], "branch": BRANCH_OUT_OF_SCOPE_ANSWER}
 
 
+async def n_requery(state: AskState) -> Dict[str, Any]:
+    """CONTINUATION 专用：意图模型结合历史重写检索查询，只供检索/重排使用。"""
+    w = get_stream_writer()
+    cfg = state["cfg"]
+    query, fallback = await P._requery_for_retrieval(
+        cfg,
+        state["question"],
+        state.get("session_id", ""),
+        history=state.get("history") or [],
+    )
+    w(_frames(state).stage("requery", {"query": query, "fallback": fallback}))
+    return {"retrieval_query": query}
+
+
 async def n_retrieve(state: AskState) -> Dict[str, Any]:
     w = get_stream_writer()
     fr = _frames(state)
     cfg = state["cfg"]
     docs = state["docs"]
+    continuation = bool(state.get("continuation"))
+    query = state.get("retrieval_query") or state["question"]
     candidate_k = P._retrieve_top_k(cfg)
     vector_list, vector_available = await P.vector_evidence(
-        state["kb_id"], cfg, docs, state["question"], candidate_k
+        state["kb_id"], cfg, docs, query, candidate_k
     )
     top1_score = float(vector_list[0]["score"]) if vector_list else 0.0
     threshold = float(cfg.get("clarifyThreshold") or 0.72)
     ev = Evidence(doc_count=len(docs), vector_available=vector_available,
                   top1_score=top1_score, fused_count=None)
-    route = decide_rag_branch(ev, cfg)
+    # CONTINUATION 已经带着上一轮澄清的补充信息，不再走 L2 澄清闸门，
+    # 否则短补充的低向量分会把用户再次推进澄清，形成死循环。
+    route = None if continuation else decide_rag_branch(ev, cfg)
     docs_by_id = {str(d["id"]): d for d in docs}
     out: Dict[str, Any] = {
         "vector": vector_list, "vector_available": vector_available,
         "top1_score": top1_score, "threshold": threshold,
-        "docs_by_id": docs_by_id, "branch": route.branch,
+        "docs_by_id": docs_by_id,
+        "branch": BRANCH_FULL_RAG if continuation else route.branch,
     }
-    if route.branch == BRANCH_CLARIFY:
+    if route is not None and route.branch == BRANCH_CLARIFY:
         detail = dict(state["detail"])
         detail["clarify"] = True
         detail["top1Score"] = P._round4(top1_score)
@@ -155,7 +200,7 @@ async def n_retrieve(state: AskState) -> Dict[str, Any]:
         w(fr.stage("intent", detail))
         out["detail"] = detail
     else:
-        bm25_list = P.bm25_search(state["question"], docs, candidate_k)
+        bm25_list = P.bm25_search(query, docs, candidate_k)
         fused = P.rrf_fuse(
             bm25=bm25_list,
             vector=vector_list,
@@ -195,6 +240,7 @@ async def n_rerank(state: AskState) -> Dict[str, Any]:
     docs = state["docs"]
     docs_by_id = state["docs_by_id"]
     fused = state["fused"]
+    query = state.get("retrieval_query") or state["question"]
     rerank_ep, rerank_model = P._resolve_stage(cfg, "rerank")
     reranked: List[Dict[str, Any]] = []
     if rerank_ep is not None and rerank_model:
@@ -205,7 +251,7 @@ async def n_rerank(state: AskState) -> Dict[str, Any]:
             for r in fused
         ]
         try:
-            resp = await P.rerank(rerank_ep, rerank_model, state["question"], payload)
+            resp = await P.rerank(rerank_ep, rerank_model, query, payload)
             scored_by_id = {str(x["id"]): float(x["score"]) for x in resp}
             for r in fused:
                 rid = str(r["id"])
@@ -219,7 +265,7 @@ async def n_rerank(state: AskState) -> Dict[str, Any]:
         except Exception:
             reranked = []
     if not reranked:
-        heuristic = P.heuristic_rerank(state["question"], fused, docs_by_id, P._rerank_top_n(cfg))
+        heuristic = P.heuristic_rerank(query, fused, docs_by_id, P._rerank_top_n(cfg))
         reranked = [
             {"id": str(r["id"]), "score": P._round4(r["score"]), "matches": int(r["matches"])}
             for r in heuristic
@@ -230,7 +276,8 @@ async def n_rerank(state: AskState) -> Dict[str, Any]:
 
 
 async def _generate_into(state: AskState, contexts_docs: List[Mapping[str, Any]], *, cite: bool,
-                         mode: str, route_key: str) -> Dict[str, Any]:
+                         mode: str, route_key: str,
+                         history: List[Dict[str, str]] | None = None) -> Dict[str, Any]:
     """澄清与完整 RAG 共用的生成段：发 generate 帧 + 转发 delta/thinking/error。"""
     w = get_stream_writer()
     fr = _frames(state)
@@ -241,6 +288,7 @@ async def _generate_into(state: AskState, contexts_docs: List[Mapping[str, Any]]
         cfg, state["question"], state["gen_ep"], state["gen_model"], state.get("session_id", ""),
         contexts_docs=contexts_docs, docs_by_id=state["docs_by_id"],
         goal=P.intent_goal(cfg, route_key), cite=cite, context_mode=mode,
+        history=history,
     ):
         if ev.get("type") == "done_answer":
             answer = ev.get("answer") or ""
@@ -261,8 +309,12 @@ async def n_generate_clarify(state: AskState) -> Dict[str, Any]:
     return out
 
 
-async def n_generate_rag(state: AskState) -> Dict[str, Any]:
-    out = await _generate_into(state, state["reranked"], cite=True, mode="full", route_key="FAQ")
+async def _generate_rag_into(
+    state: AskState, *, history: List[Dict[str, str]] | None = None
+) -> Dict[str, Any]:
+    out = await _generate_into(
+        state, state["reranked"], cite=True, mode="full", route_key="FAQ", history=history
+    )
     if out.get("halt"):
         return out
     validation = await P._run_validation(state["cfg"], out["answer"], state["reranked"], state["docs_by_id"])
@@ -271,6 +323,15 @@ async def n_generate_rag(state: AskState) -> Dict[str, Any]:
         out["validation"] = validation
     out["sources"] = _sources(state, state["reranked"])
     return out
+
+
+async def n_generate_rag(state: AskState) -> Dict[str, Any]:
+    return await _generate_rag_into(state)
+
+
+async def n_generate_continuation(state: AskState) -> Dict[str, Any]:
+    """澄清后的信息补充：生成时插入 [system] + history + 本轮 user。"""
+    return await _generate_rag_into(state, history=state.get("history") or [])
 
 
 def _sources(state: AskState, ranked: List[Mapping[str, Any]]) -> List[Dict[str, Any]]:
@@ -299,20 +360,28 @@ async def n_error_not_configured(state: AskState) -> Dict[str, Any]:
 # ---------------------------------------------------------------- 路由
 
 def _after_intent(state: AskState) -> str:
-    """四条出口按优先级：未配置端点 > 超出范围 > 空档案库 > 正常检索。"""
+    """出口按优先级：未配置端点 > 超出范围 > 空档案库 > 澄清补充重写查询 > 正常检索。"""
     if state.get("halt"):
         return "error_not_configured"
     if state["branch"] == BRANCH_OUT_OF_SCOPE_ANSWER:
         return "answer_out_of_scope"
     if not state["docs"]:
         return "answer_no_docs"
+    if state.get("continuation"):
+        return "requery"
     return "retrieve"
 
 
 def _after_retrieve(state: AskState) -> str:
+    if state.get("continuation"):
+        return "answer_no_relevant" if state.get("halt") else "rerank"
     if state["branch"] == BRANCH_CLARIFY:
         return "generate_clarify"
     return "answer_no_relevant" if state.get("halt") else "rerank"
+
+
+def _after_rerank(state: AskState) -> str:
+    return "generate_continuation" if state.get("continuation") else "generate_rag"
 
 
 def _after_generate(state: AskState) -> str:
@@ -331,10 +400,12 @@ def build_graph() -> StateGraph:
     g.add_node("answer_out_of_scope", n_answer_out_of_scope)
     g.add_node("answer_no_docs", n_answer_no_docs)
     g.add_node("answer_no_relevant", n_answer_no_relevant)
+    g.add_node("requery", n_requery)
     g.add_node("retrieve", n_retrieve)
     g.add_node("rerank", n_rerank)
     g.add_node("generate_clarify", n_generate_clarify)
     g.add_node("generate_rag", n_generate_rag)
+    g.add_node("generate_continuation", n_generate_continuation)
     g.add_node("done", n_finish)
 
     g.add_edge(START, "load")
@@ -343,16 +414,22 @@ def build_graph() -> StateGraph:
         "error_not_configured": "error_not_configured",
         "answer_out_of_scope": "answer_out_of_scope",
         "answer_no_docs": "answer_no_docs",
+        "requery": "requery",
         "retrieve": "retrieve",
     })
+    g.add_edge("requery", "retrieve")
     g.add_conditional_edges("retrieve", _after_retrieve, {
         "generate_clarify": "generate_clarify",
         "answer_no_relevant": "answer_no_relevant",
         "rerank": "rerank",
     })
-    g.add_edge("rerank", "generate_rag")
+    g.add_conditional_edges("rerank", _after_rerank, {
+        "generate_rag": "generate_rag",
+        "generate_continuation": "generate_continuation",
+    })
     g.add_conditional_edges("generate_clarify", _after_generate, {"done": "done", END: END})
     g.add_conditional_edges("generate_rag", _after_generate, {"done": "done", END: END})
+    g.add_conditional_edges("generate_continuation", _after_generate, {"done": "done", END: END})
     g.add_conditional_edges("answer_out_of_scope", _after_short_answer, {"done": "done", END: END})
     g.add_edge("answer_no_docs", "done")
     g.add_edge("answer_no_relevant", "done")

@@ -1,6 +1,6 @@
 # Kraq — 知识库智能问答系统
 
-RAG 全链路的问答工作台：**二分类意图（FAQ / OUT_OF_SCOPE）→ 向量置信门控 → BM25 + 向量混合检索 → RRF 融合 → 重排序 → 流式生成 → 引用/幻觉校验**。全过程在右侧「流程追溯」面板逐步可视化，FAQ 回答带 `[n]` 引用编号，悬停可溯源原文；检索置信不足自动转「澄清」分支，超范围消息友好转介。
+RAG 全链路的问答工作台：**三分类意图（FAQ / OUT_OF_SCOPE / CONTINUATION）→ 向量置信门控 → BM25 + 向量混合检索 → RRF 融合 → 重排序 → 流式生成 → 引用/幻觉校验**。全过程在右侧「流程追溯」面板逐步可视化，FAQ 回答带 `[n]` 引用编号，悬停可溯源原文；检索置信不足自动转「澄清」分支，超范围消息友好转介；澄清后的补充（CONTINUATION）会先用意图模型重写检索查询（requery），再带上会话历史继续完整 RAG。
 
 Python FastAPI 承担全部 RAG 逻辑，Next.js 只做界面与流式转发；模型端点可配置、可换（Ollama / 任何 OpenAI 兼容服务 / llama.cpp）。
 
@@ -47,11 +47,11 @@ data/（运行时数据，已 gitignore，首次启动自动播种）
 
 | 阶段 | 实现 | 模型不可用/失败时 |
 | --- | --- | --- |
-| 意图识别 | LLM **二分类** FAQ / OUT_OF_SCOPE（SEARCH 并入 FAQ；CLARIFY 不是判定标签，由检索置信触发，见下行）；含义模糊也算 FAQ，交给门控确认 | 规则兜底 `classify_intent`（同一标签集） |
-| 置信门控 | FAQ 先走向量检索：top-1 余弦 ≥ `clarifyThreshold`（默认 0.72）→ 混合检索全链路；低于阈值 → **CLARIFY 分支**：静默跳过 BM25/重排/校验，已召回候选转为「澄清」生成 | 门控仅在向量服务可用时判定；向量不可用则直接走 BM25 全链路（trace 标记 `vectorAvailable:false`），绝不阻塞 |
+| 意图识别 | LLM **三分类** FAQ / OUT_OF_SCOPE / CONTINUATION（SEARCH 并入 FAQ；CLARIFY 不是判定标签，由检索置信触发，见下行；CONTINUATION=对上一轮澄清追问的补充，必须结合会话历史判定）；含义模糊也算 FAQ，交给门控确认 | 规则兜底 `classify_intent` 只能判 FAQ / OUT_OF_SCOPE；CONTINUATION 必须由模型判定 |
+| 置信门控 | FAQ 先走向量检索：top-1 余弦 ≥ `clarifyThreshold`（默认 0.72）→ 混合检索全链路；低于阈值 → **CLARIFY 分支**：静默跳过 BM25/重排/校验，已召回候选转为「澄清」生成。**CONTINUATION 跳过门控**：先由意图模型根据会话历史重写独立检索查询（`requery`），再用该查询走完整混合检索 | 门控仅在向量服务可用时判定；向量不可用则直接走 BM25 全链路（trace 标记 `vectorAvailable:false`），绝不阻塞；requery 失败时回落为“上一轮问题 + 本轮补充” |
 | 检索 | BM25（CJK 单字+二元分词）+ Chroma 向量召回，加权 RRF 融合（k=60） | 向量缺席→仅 BM25 |
 | 重排 | 配置了重排模型则调用（如 bge-reranker-v2-m3） | 词重叠启发式重排兜底 |
-| 生成 | 流式输出（`delta`/`thinking` 事件）；系统提示词 = Agent 全局提示词 + 本轮**意图生成目标**：FAQ=引用作答 / CLARIFY=引导澄清不出答案 / OUT_OF_SCOPE=固定拒答头 + LLM 友好转介（不走 RAG、无 sources） | 聊天卡内直接显示失败原因；OOS 生成失败退回固定话术。**不用 mock 内容冒充回答** |
+| 生成 | 流式输出（`delta`/`thinking` 事件）；系统提示词 = Agent 全局提示词 + 本轮**意图生成目标**：FAQ=引用作答 / CLARIFY=引导澄清不出答案 / OUT_OF_SCOPE=固定拒答头 + LLM 友好转介（不走 RAG、无 sources）；**CONTINUATION** 按 `[system] + 会话历史 + 本轮 user（含编号资料）` 组装 | 聊天卡内直接显示失败原因；OOS 生成失败退回固定话术。**不用 mock 内容冒充回答** |
 | 校验 | LLM 校验引用与幻觉，输出 `valid/citations/reason` JSON（仅 FAQ 主链路，CLARIFY/OOS 不校验） | 引用规则校验兜底（编号越界/缺失即不通过，可整体开关） |
 
 诚实降级是设计原则：任何环节失败都明确标注、能兜底就兜底，不伪造结果。
@@ -115,7 +115,8 @@ backend/                 # FastAPI 后端（RAG 心脏）
   chroma_store.py        # Chroma PersistentClient（data/chroma/，每库一个 collection）
   store.py               # kb.json/config.json 存储：asyncio锁 + 原子写 + 版本迁移
   models_client.py       # ollama/openai/llamacpp 三协议 + llama.cpp rerank 服务自动拉起
-  chunker.py             # 上传文件的标题/段落感知切块
+  splitters.py           # 切块策略层（langchain-text-splitters：分隔符递归/单分隔符/Markdown 标题/JSON）
+  raw_store.py           # data/raw/ 转换后原文留存，供「重新嵌入」按当前策略重切
   link_extractor.py      # 链接转存：抓取（浏览器 UA + 登录态兜底）→ 按 content-type 分发
   document_converter.py  # 非 HTML 输入 → Markdown（markitdown 薄封装，只喂 bytes）
   task_queue.py          # 转存异步任务队列（进度/终态写 data/tasks.json）
@@ -142,16 +143,18 @@ data/                    # 运行时状态（gitignore）；删掉即完全重�
 | `GET/POST /api/kbs`、`PUT/DELETE /api/kbs` | 知识库增删改查（default 库不可删；删库连带清 Chroma collection） |
 | `GET/PUT /api/agent/prompt` | 知识问答 Agent 的全局系统提示词（空 = 回落全局默认） |
 | `GET/POST/DELETE /api/kb` | 当前库文档列表/添加/删除（均带 `kbId`，缺省回落 `default`） |
-| `POST /api/kb/upload` | multipart 上传档案（`file` + `kbId`/`title` 可选）：txt/md/html/htm/pdf/docx/pptx/xlsx/epub/csv/json/xml，≤20MB → 自动切块入库 |
-| `POST /api/link-clip` | 链接转存（同步）：抓取 → HTML 走 trafilatura 正文、其余走 markitdown → 切块入库 |
+| `POST /api/kb/upload` | multipart 上传档案（`file` + `kbId`/`title`/`strategy` 可选）：txt/md/html/htm/pdf/docx/pptx/xlsx/epub/csv/json/xml，≤20MB；`strategy` 指定本次切块模式并写回本库配置 → 存 Markdown 原文 → 切块入库 |
+| `POST/GET /api/kbs/{id}/embed` | 补算本库所有待向量化文档（不重切、不清集合），返回/查询任务进度；上传后立即嵌入走这里 |
+| `POST /api/kb/text` | 手动录入正文（`kbId`/`title`/`content`）：正文规范成 Markdown → 存原文 → 切块入库 |
+| `POST /api/link-clip` | 链接转存（同步）：抓取 → HTML 走 trafilatura 纯文本再转 Markdown、其余走 markitdown → 存原文 → 切块入库 |
 | `POST /api/link-clip/async` | 链接转存（异步），返回 `task_id`；`GET /api/link-clip/tasks/{id}` 查进度，`POST .../cancel` 请求取消 |
-| `POST /api/ask` | SSE 问答；`kbId` 可选，`sessionId`（页面会话 ID）供网关稳定命中 prompt 缓存 |
+| `POST /api/ask` | SSE 问答；`kbId` 可选，`sessionId`（页面会话 ID）供网关稳定命中 prompt 缓存；`history`（本会话已完成的 user/assistant 轮次）可选，供意图判定 CONTINUATION 与生成承接上下文 |
 
-SSE 帧序（FAQ 主链）固定为 `intent → retrieve → rerank → generate → (delta/thinking…) → (validate) → done`；**CLARIFY / OUT_OF_SCOPE 分支在 intent 后静默短路**，不发 retrieve/rerank/validate 帧（生成文本仍走 `delta/thinking`；OOS 的 `done` 无 sources，CLARIFY 以流结束收尾）。异常发 `{"type":"error"}`。这一帧序是前后端契约（前端 `applyEvent` 依赖它），改动任何一环都不得破坏。
+SSE 帧序（FAQ 主链）固定为 `intent → retrieve → rerank → generate → (delta/thinking…) → (validate) → done`；**CLARIFY / OUT_OF_SCOPE 分支在 intent 后静默短路**，不发 retrieve/rerank/validate 帧（生成文本仍走 `delta/thinking`；OOS 的 `done` 无 sources，CLARIFY 以流结束收尾）。**CONTINUATION 不短路**，帧序为 `intent → requery → retrieve → rerank → generate → validate → done`，生成节点插入会话历史。异常发 `{"type":"error"}`。这一帧序是前后端契约（前端 `applyEvent` 依赖它），改动任何一环都不得破坏。
 
 ## 数据与备份
 
-`knowledge base = data/kb.json`，向量在 `data/chroma/`，均为运行时生成且已 gitignore：
+`knowledge base = data/kb.json`，向量在 `data/chroma/`，切块前 Markdown 原文按库存在 `data/raw/<kbId>/<sourceId>.md`，均为运行时生成且已 gitignore：
 
 - 旧版平铺结构自动迁移为单库 `default`，无需手工迁移。
 - 向量按文档懒补算（带模型名+维度校验），启动时后台 `sync_all` 幂等补齐；换 embedding 模型后旧向量自动失效重算。

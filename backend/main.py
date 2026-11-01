@@ -8,7 +8,7 @@ Run via ../main.py (mounts this app under /api) or standalone:
 import asyncio
 import os
 from pathlib import Path
-from typing import Mapping
+from typing import List, Mapping
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -16,10 +16,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import chroma_store
-from .chunker import chunk_text
+from .raw_store import new_source_id, save_raw
+from .splitters import (
+    STRATEGIES,
+    UI_SCHEMA as CHUNKING_UI_SCHEMA,
+    default_params,
+    split_document,
+)
 from .models_client import list_models
 from .orchestrator.runner import astream_frames
-from .pipeline import get_reembed_job, start_reembed_kb, sync_all_background
+from .pipeline import (
+    get_embed_job,
+    get_reembed_job,
+    start_embed_pending_kb,
+    start_reembed_kb,
+    sync_all_background,
+)
 from .store import (
     DATA_FILE_LOCK,
     DEFAULT_KB_ID,
@@ -45,7 +57,7 @@ from .store import (
     update_kb_settings,
 )
 from .common import now_iso, decode_bytes
-from .document_converter import convert_bytes
+from .document_converter import convert_bytes, text_to_markdown
 
 app = FastAPI(title="Kraq Backend", version="0.3.0")
 
@@ -252,6 +264,12 @@ async def kbs_create(request: Request):
         return _err(500, f"新建知识库失败：{e}")
 
 
+@app.get("/api/chunking/schema")
+async def chunking_schema():
+    """切块策略与参数元数据：前端据此渲染控件，避免把选项写死两处。"""
+    return JSONResponse({"strategies": CHUNKING_UI_SCHEMA})
+
+
 @app.get("/api/kbs/{kb_id}/settings")
 async def kb_settings_get(kb_id: str):
     try:
@@ -346,6 +364,35 @@ async def kb_reembed_status(kb_id: str):
     return JSONResponse(job)
 
 
+@app.post("/api/kbs/{kb_id}/embed")
+async def kb_embed(kb_id: str):
+    """补算本库所有待向量化文档（不重切、不清集合），供上传后立即嵌入。"""
+    want = normalize_kb_id(kb_id)
+    if not any(kb["kbId"] == want for kb in get_kbs()):
+        return _err(404, f"知识库不存在：{kb_id}")
+    try:
+        job = start_embed_pending_kb(want)
+    except Exception as e:
+        return _err(400, str(e) or "嵌入启动失败")
+    return JSONResponse(job)
+
+
+@app.get("/api/kbs/{kb_id}/embed")
+async def kb_embed_status(kb_id: str):
+    """最近一次「嵌入」任务的进度/终态；无记录时返回 idle 快照。"""
+    want = normalize_kb_id(kb_id)
+    job = get_embed_job(want)
+    if job is None:
+        return JSONResponse({
+            "kbId": want,
+            "status": "idle",
+            "total": 0,
+            "done": 0,
+            "error": None,
+        })
+    return JSONResponse(job)
+
+
 @app.get("/api/agent/prompt")
 async def agent_prompt_get():
     """知识问答 Agent 的全局系统提示词（不再下辖于知识库）。"""
@@ -418,6 +465,8 @@ def _doc_meta(d: dict) -> dict:
         "content": d["content"],
         "createdAt": d.get("createdAt") or now_iso(),
         "embedded": bool(meta and meta.get("upserted")),
+        # 前端据此提示"多少篇有原文可重切、多少篇只能重嵌"
+        "hasSource": bool(d.get("sourceId")),
     }
 
 
@@ -488,10 +537,11 @@ async def kb_upload(request: Request):
             if len(content) > MAX_UPLOAD_CHARS:
                 return _err(400, "文件内容超出 2M 字符限制")
         elif ext in HTML_EXTS:
-            from .link_extractor import extract_html_article
+            from .link_extractor import extract_html_article, extracted_to_markdown
 
             try:
-                content = (await asyncio.to_thread(extract_html_article, raw, ""))["content"]
+                extracted = await asyncio.to_thread(extract_html_article, raw, "")
+                content = extracted_to_markdown(extracted, title_base)
             except Exception:
                 # 正文识别不出来的存档页（全是 div 之类）回落整页转换
                 content = await _to_markdown(raw, ext, filename, None)
@@ -504,17 +554,28 @@ async def kb_upload(request: Request):
 
     try:
         async with DATA_FILE_LOCK:
-            # per-KB 切块参数：读本库 chunking（不再用全局）
+            # per-KB 切块策略与参数（strategy/maxChars/overlap/params）都在 chunking 里
             settings = get_kb_settings(kb_id)
             chunking = settings.get("chunking") or {}
-            max_chars = int(chunking.get("maxChars") or 600)
-            overlap = int(chunking.get("overlap") or 50)
-            pieces = chunk_text(content, max_chars, overlap)
+            # 档案柜的「嵌入模式」随本次上传提交：它改的是本库当前的切块策略，
+            # 让后续「重新嵌入」与这次入库保持同一口径。
+            strategy = str(form.get("strategy") or "").strip()
+            if strategy:
+                if strategy not in STRATEGIES:
+                    return _err(400, f"未知的切块策略：{strategy}")
+                chunking = {**chunking, "strategy": strategy, "params": default_params(strategy)}
+            # 先存切块前的 Markdown 原文，再切块/入库：「重新嵌入」要靠它按新策略重切
+            source_id = save_raw(kb_id, new_source_id(), content)
+            pieces = split_document(content, chunking)
+            if strategy:
+                # 切块成功后再把模式写回本库，避免一次失败的上传改掉库配置
+                update_kb_settings(kb_id, {"chunking": chunking})
             now = now_iso()
             meta = {"source": "upload", "filename": filename, "format": ext[1:]}
             new_docs = [
                 {
                     "id": new_doc_id(),
+                    "sourceId": source_id,
                     "title": f"{title_base} · 第{i + 1}块",
                     "content": str(p["text"]),
                     "embeddingMeta": {"upserted": False, **meta},
@@ -528,6 +589,45 @@ async def kb_upload(request: Request):
         return _err(500, f"文件切块入库失败：{e}")
 
 
+@app.post("/api/kb/text")
+async def kb_text(request: Request):
+    """手动录入：标题 + 正文 → Markdown → 存原文 → 按当前策略切块入库。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return _err(400, "请求体不是合法 JSON")
+    content = str(body.get("content") or "").strip()
+    if not content:
+        return _err(400, "正文不能为空")
+    if len(content) > MAX_UPLOAD_CHARS:
+        return _err(400, "正文超出 2M 字符限制")
+    title_base = str(body.get("title") or "").strip()[:200] or "手动录入"
+    kb_id = _resolve_kb(str(body.get("kbId") or "").strip())
+    markdown = text_to_markdown(content, title_base)
+    try:
+        async with DATA_FILE_LOCK:
+            settings = get_kb_settings(kb_id)
+            source_id = save_raw(kb_id, new_source_id(), markdown)
+            pieces = split_document(markdown, settings.get("chunking"))
+            now = now_iso()
+            meta = {"source": "manual", "format": "md"}
+            new_docs = [
+                {
+                    "id": new_doc_id(),
+                    "sourceId": source_id,
+                    "title": f"{title_base} · 第{i + 1}块",
+                    "content": str(p["text"]),
+                    "embeddingMeta": {"upserted": False, **meta},
+                    "createdAt": now,
+                }
+                for i, p in enumerate(pieces)
+            ]
+            created = add_docs_batch(kb_id, new_docs)
+        return JSONResponse({"docs": [_doc_meta(d) for d in created], "kbId": kb_id})
+    except Exception as e:
+        return _err(500, f"手动录入入库失败：{e}")
+
+
 @app.post("/api/link-clip")
 async def link_clip(request: Request):
     """链接剪藏端点：接收 URL → 调用内嵌提取器 → 直接入库（无需写 .md 文件）"""
@@ -539,7 +639,7 @@ async def link_clip(request: Request):
     kb_id = _resolve_kb(str(body.get("kbId") or "").strip() or "default")
     if not url:
         return _err(400, "缺少 url 字段")
-    from .link_extractor import extract_content, normalize_clip_url
+    from .link_extractor import extract_content, extracted_to_markdown, normalize_clip_url
     try:
         url = normalize_clip_url(url)
     except Exception as e:
@@ -553,7 +653,7 @@ async def link_clip(request: Request):
         return _err(500, f"链接内容提取失败：{e}")
 
     title = extracted.get("title") or url[:50]
-    content_text = extracted.get("content") or ""
+    content_text = extracted_to_markdown(extracted, title)
     if not content_text:
         return _err(500, "提取内容为空")
 
@@ -561,10 +661,8 @@ async def link_clip(request: Request):
     # 统一入库格式：仅存内容，标题留待后续 LLM 生成；提取的元数据存入 embeddingMeta 供后续使用
     async with DATA_FILE_LOCK:
         settings = get_kb_settings(kb_id)
-        chunking = settings.get("chunking") or {}
-        max_chars = int(chunking.get("maxChars") or 600)
-        overlap = int(chunking.get("overlap") or 50)
-        pieces = chunk_text(str(content_text), max_chars, overlap)
+        source_id = save_raw(kb_id, new_source_id(), content_text)
+        pieces = split_document(content_text, settings.get("chunking"))
         now = now_iso()
         # 提取的元数据，供后续 LLM 生成标题或其他用途
         extracted_meta = {
@@ -579,6 +677,7 @@ async def link_clip(request: Request):
         new_docs = [
             {
                 "id": new_doc_id(),
+                "sourceId": source_id,
                 "title": f"片段 {i + 1}",  # 占位标题，后续由 LLM 生成
                 "content": str(p["text"]),
                 "embeddingMeta": {"upserted": False, "source": "link-clip", **extracted_meta},
@@ -687,6 +786,37 @@ def _sse_frame(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+# 会话历史由前端按当前会话收集后随请求传入；后端只做结构清洗与长度保护，
+# 不做持久化（sessionId 目前只是网关缓存头，刷新即新）。
+MAX_HISTORY_MESSAGES = 40
+MAX_HISTORY_CHARS = 24000
+
+
+def _parse_history(value: object) -> List[dict]:
+    if not isinstance(value, list):
+        return []
+    cleaned: List[dict] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        role = str(item.get("role") or "")
+        content = str(item.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        cleaned.append({"role": role, "content": content})
+    kept: List[dict] = []
+    total = 0
+    for m in reversed(cleaned):
+        if len(kept) >= MAX_HISTORY_MESSAGES:
+            break
+        if kept and total + len(m["content"]) > MAX_HISTORY_CHARS:
+            break
+        kept.append(m)
+        total += len(m["content"])
+    kept.reverse()
+    return kept
+
+
 @app.post("/api/ask")
 async def ask(request: Request):
     try:
@@ -700,10 +830,13 @@ async def ask(request: Request):
     # 页面生命周期会话 ID（前端生成）：同页多次提问共用，刷新即新。
     # 供 openai 网关会话头（opencode go x-opencode-session）稳定命中 prompt 缓存。
     session_id = str(body.get("sessionId") or "").strip()[:64]
+    history = _parse_history(body.get("history"))
 
     async def event_stream():
         try:
-            async for ev in astream_frames(question, kb_id, session_id=session_id):
+            async for ev in astream_frames(
+                question, kb_id, session_id=session_id, history=history
+            ):
                 yield _sse_frame(ev)
         except Exception as e:
             yield _sse_frame({"type": "error", "message": f"服务异常：{e}"})

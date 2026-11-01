@@ -24,6 +24,28 @@ def image_urls(markdown: str) -> list[str]:
     return _IMAGE_RE.findall(markdown)
 
 
+def text_to_markdown(text: str, title: str = "") -> str:
+    """纯文本 → Markdown：只做段落规范化与标题行，不臆造结构。
+
+    trafilatura 的网页正文是纯文本（output_format 默认 txt）。markitdown 对纯文本
+    是恒等变换，所以这里不再过 markitdown，只把空行规范成 Markdown 段落并补标题。
+    """
+    body = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    # 行尾空白在 Markdown 里是硬换行，统一去掉；行首缩进保留（代码块有意义）
+    body = "\n".join(line.rstrip() for line in body.split("\n"))
+    body = re.sub(r"\n{3,}", "\n\n", body)
+    title = str(title or "").strip()
+    if not title:
+        return body + ("\n" if body else "")
+    first, _, rest = body.partition("\n")
+    if first.strip().lstrip("#").strip() == title:
+        rest = rest.lstrip("\n")
+        body = f"# {title}" + (f"\n\n{rest}" if rest else "")
+    else:
+        body = f"# {title}" + (f"\n\n{body}" if body else "")
+    return body + "\n"
+
+
 def convert_bytes(
     data: bytes,
     *,
